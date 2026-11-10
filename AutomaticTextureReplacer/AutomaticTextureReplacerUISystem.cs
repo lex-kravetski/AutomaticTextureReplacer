@@ -197,14 +197,26 @@ namespace AutomaticTextureReplacer
                         continue;
                     }
 
+                    string group = GetSurfaceGroup(prefab);
+                    string menuPath = GetSurfaceMenuPath(prefab);
+                    string modName = GetModDisplayName(prefab);
+                    string modId = GetModId(prefab);
+                    Mod.Log.InfoFormat(
+                        "Surface catalog: asset='{0}', group='{1}', menuPath='{2}', modName='{3}', modId='{4}'",
+                        name,
+                        group,
+                        menuPath,
+                        modName ?? "",
+                        modId ?? "");
+
                     catalog.Add(new Dictionary<string, string>
                     {
                         ["id"] = id,
                         ["name"] = name,
                         ["thumbnail"] = GetSurfaceThumbnail(prefab),
                         ["tooltipThumbnail"] = GetLargeThumbnail(prefab),
-                        ["group"] = GetSurfaceGroup(prefab),
-                        ["menuPath"] = GetSurfaceMenuPath(prefab),
+                        ["group"] = group,
+                        ["menuPath"] = menuPath,
                         ["isMod"] = (!prefab.isBuiltin).ToString(),
                     });
                 }
@@ -328,27 +340,163 @@ namespace AutomaticTextureReplacer
 
         private static string GetModDisplayName(SurfacePrefab prefab)
         {
-            string platformId = prefab.asset?.GetMeta().platformID;
-            if (!string.IsNullOrWhiteSpace(platformId))
+            ModManager.ModInfo owner = FindOwningMod(prefab);
+            if (owner != null)
             {
-                ModManager modManager = GameManager.instance?.modManager;
-                if (modManager != null)
+                string ownerDisplayName = owner.asset.GetMeta().displayName;
+                if (!string.IsNullOrWhiteSpace(ownerDisplayName))
                 {
-                    foreach (ModManager.ModInfo mod in modManager)
+                    return ownerDisplayName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(owner.asset.name))
+                {
+                    return owner.asset.name;
+                }
+            }
+
+            if (prefab.asset != null)
+            {
+                string displayName = prefab.asset.GetMeta().displayName;
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    string assetSuffix = GetModAssetNameSuffix(prefab);
+                    if (!string.IsNullOrEmpty(assetSuffix) &&
+                        displayName.EndsWith(assetSuffix, StringComparison.OrdinalIgnoreCase))
                     {
-                        if (string.Equals(mod.asset?.GetMeta().platformID, platformId, StringComparison.Ordinal))
+                        displayName = displayName.Substring(0, displayName.Length - assetSuffix.Length).TrimEnd();
+                    }
+
+                    return displayName;
+                }
+            }
+
+            string modFolder = GetModFolderName(prefab.asset?.path);
+            if (modFolder != null && GameManager.instance?.modManager != null)
+            {
+                foreach (ModManager.ModInfo mod in GameManager.instance.modManager)
+                {
+                    if (string.Equals(GetModFolderName(mod.asset?.path), modFolder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string displayName = mod.asset.GetMeta().displayName;
+                        if (!string.IsNullOrWhiteSpace(displayName))
                         {
-                            string name = mod.name;
-                            if (!string.IsNullOrWhiteSpace(name))
-                            {
-                                return name;
-                            }
+                            return displayName;
                         }
                     }
                 }
             }
 
             return null;
+        }
+
+        private static string GetModAssetNameSuffix(SurfacePrefab prefab)
+        {
+            if (prefab.TryGet<UIObject>(out UIObject uiObject) &&
+                !string.IsNullOrWhiteSpace(uiObject?.m_Group?.name))
+            {
+                return " " + uiObject.m_Group.name + " " + prefab.name;
+            }
+
+            return " " + prefab.name;
+        }
+
+        private static string GetModFolderName(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            string directory = Path.GetDirectoryName(path);
+            while (!string.IsNullOrEmpty(directory))
+            {
+                string name = Path.GetFileName(directory);
+                int separator = name.IndexOf('_');
+                if (separator > 0 && int.TryParse(name.Substring(0, separator), out _))
+                {
+                    return name.Substring(0, separator);
+                }
+
+                directory = Path.GetDirectoryName(directory);
+            }
+
+            return null;
+        }
+
+        private static string GetModId(SurfacePrefab prefab)
+        {
+            if (prefab.asset != null)
+            {
+                string platformId = prefab.asset.GetMeta().platformID;
+                if (!string.IsNullOrWhiteSpace(platformId))
+                {
+                    return platformId;
+                }
+            }
+
+            ModManager.ModInfo owner = FindOwningMod(prefab);
+            if (owner?.asset != null)
+            {
+                string ownerPlatformId = owner.asset.GetMeta().platformID;
+                if (!string.IsNullOrWhiteSpace(ownerPlatformId))
+                {
+                    return ownerPlatformId;
+                }
+
+                string ownerFolderId = GetModFolderName(owner.asset.path);
+                if (!string.IsNullOrWhiteSpace(ownerFolderId))
+                {
+                    return ownerFolderId;
+                }
+            }
+
+            return GetModFolderName(prefab.asset?.path);
+        }
+
+        private static ModManager.ModInfo FindOwningMod(SurfacePrefab prefab)
+        {
+            string sourceName = prefab.asset?.GetMeta().displayName;
+            if (string.IsNullOrWhiteSpace(sourceName))
+            {
+                sourceName = prefab.name;
+            }
+
+            ModManager modManager = GameManager.instance?.modManager;
+            if (modManager == null || string.IsNullOrWhiteSpace(sourceName))
+            {
+                return null;
+            }
+
+            ModManager.ModInfo bestMatch = null;
+            int bestMatchLength = 0;
+            foreach (ModManager.ModInfo mod in modManager)
+            {
+                if (mod?.asset == null)
+                {
+                    continue;
+                }
+
+                string[] possibleNames =
+                {
+                    mod.asset.name,
+                    mod.asset.GetMeta().displayName,
+                };
+                foreach (string possibleName in possibleNames)
+                {
+                    if (string.IsNullOrWhiteSpace(possibleName) || possibleName.Length <= bestMatchLength ||
+                        !sourceName.StartsWith(possibleName, StringComparison.OrdinalIgnoreCase) ||
+                        (sourceName.Length > possibleName.Length && !char.IsWhiteSpace(sourceName[possibleName.Length])))
+                    {
+                        continue;
+                    }
+
+                    bestMatch = mod;
+                    bestMatchLength = possibleName.Length;
+                }
+            }
+
+            return bestMatch;
         }
 
         private void SetSurfacePickerPosition(string value)

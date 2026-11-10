@@ -2,6 +2,7 @@ using Game;
 using Game.Modding;
 using Game.SceneFlow;
 using Colossal.IO.AssetDatabase;
+using Colossal.Logging;
 using Colossal.UI;
 using System.IO;
 using System.Reflection;
@@ -14,6 +15,7 @@ namespace AutomaticTextureReplacer
     /// </summary>
     public sealed class Mod : IMod
     {
+        public static ILog Log { get; } = LogManager.GetLogger("AutomaticTextureReplacer").SetShowsErrorsInUI(false);
         public static AutomaticTextureReplacerSettings Settings { get; private set; }
 
         public void OnLoad(UpdateSystem updateSystem)
