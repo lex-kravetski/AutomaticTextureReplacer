@@ -19,6 +19,18 @@ namespace AutomaticTextureReplacer
         [SettingsUISlider(min = 80, max = 200, step = 5)]
         public int DialogFontSize { get; set; } = 100;
 
+        [SettingsUISection(kMainSection)]
+        public bool ShowInGameSurfacesAsTargets { get; set; }
+
+        [SettingsUISection(kMainSection)]
+        public bool ShowSpecialIndustrySurfacesAsTargets { get; set; }
+
+        [SettingsUISection(kMainSection)]
+        public bool ShowModSurfacesAsSources { get; set; }
+
+        [SettingsUISection(kMainSection)]
+        public bool ShowRevertAllButton { get; set; }
+
         [SettingsUIHidden]
         public bool DialogOpen { get; set; } = true;
 
@@ -71,6 +83,10 @@ namespace AutomaticTextureReplacer
             SurfacePickerContextJson = "";
             RulesJson = "[]";
             DialogFontSize = 100;
+            ShowInGameSurfacesAsTargets = false;
+            ShowSpecialIndustrySurfacesAsTargets = false;
+            ShowModSurfacesAsSources = false;
+            ShowRevertAllButton = false;
         }
     }
 
@@ -93,6 +109,14 @@ namespace AutomaticTextureReplacer
                 { m_Settings.GetOptionTabLocaleID(AutomaticTextureReplacerSettings.kMainSection), "Main" },
                 { m_Settings.GetOptionLabelLocaleID(nameof(AutomaticTextureReplacerSettings.DialogFontSize)), "Dialog content font size (%)" },
                 { m_Settings.GetOptionDescLocaleID(nameof(AutomaticTextureReplacerSettings.DialogFontSize)), "Text size inside the dialog. The dialog title is not affected." },
+                { m_Settings.GetOptionLabelLocaleID(nameof(AutomaticTextureReplacerSettings.ShowInGameSurfacesAsTargets)), "Show in-game surfaces as replacement targets" },
+                { m_Settings.GetOptionDescLocaleID(nameof(AutomaticTextureReplacerSettings.ShowInGameSurfacesAsTargets)), "Include built-in in-game surfaces in the target surface picker." },
+                { m_Settings.GetOptionLabelLocaleID(nameof(AutomaticTextureReplacerSettings.ShowSpecialIndustrySurfacesAsTargets)), "Show special industry surfaces as replacement targets" },
+                { m_Settings.GetOptionDescLocaleID(nameof(AutomaticTextureReplacerSettings.ShowSpecialIndustrySurfacesAsTargets)), "Include special industry surfaces in the target surface picker." },
+                { m_Settings.GetOptionLabelLocaleID(nameof(AutomaticTextureReplacerSettings.ShowModSurfacesAsSources)), "Show mod surfaces as replacement sources" },
+                { m_Settings.GetOptionDescLocaleID(nameof(AutomaticTextureReplacerSettings.ShowModSurfacesAsSources)), "Include mod-provided surfaces in the source surface picker." },
+                { m_Settings.GetOptionLabelLocaleID(nameof(AutomaticTextureReplacerSettings.ShowRevertAllButton)), "Show Revert All button" },
+                { m_Settings.GetOptionDescLocaleID(nameof(AutomaticTextureReplacerSettings.ShowRevertAllButton)), "Show the button that restores surface prefabs from their default assets." },
             };
         }
 

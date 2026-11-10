@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Colossal.Json;
 using Colossal.UI.Binding;
 using Game.Areas;
@@ -24,6 +25,10 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_DialogWidth;
         private ValueBinding<int> m_DialogHeight;
         private ValueBinding<int> m_DialogFontSize;
+        private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
+        private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
+        private ValueBinding<bool> m_ShowModSurfacesAsSources;
+        private ValueBinding<bool> m_ShowRevertAllButton;
         private ValueBinding<int> m_SurfacePickerX;
         private ValueBinding<int> m_SurfacePickerY;
         private ValueBinding<int> m_SurfacePickerWidth;
@@ -34,7 +39,14 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_RulesJson;
         private EntityQuery m_SurfaceQuery;
         private int m_LastDialogFontSize = -1;
-        private bool m_SurfaceCatalogLoaded;
+        private bool? m_LastShowInGameSurfacesAsTargets;
+        private bool? m_LastShowSpecialIndustrySurfacesAsTargets;
+        private bool? m_LastShowModSurfacesAsSources;
+        private bool? m_LastShowRevertAllButton;
+        private bool m_SurfaceCatalogBuildStarted;
+        private Task<string> m_SurfaceCatalogBuildTask;
+        private int m_SurfaceCatalogSurfaceCount;
+        private int m_SurfaceCatalogModSurfaceCount;
 
         protected override void OnCreate()
         {
@@ -47,6 +59,22 @@ namespace AutomaticTextureReplacer
             AddBinding(m_DialogWidth = new ValueBinding<int>("automatictexturereplacer", "dialogWidth", settings?.DialogWidth ?? 440));
             AddBinding(m_DialogHeight = new ValueBinding<int>("automatictexturereplacer", "dialogHeight", settings?.DialogHeight ?? 300));
             AddBinding(m_DialogFontSize = new ValueBinding<int>("automatictexturereplacer", "dialogFontSize", settings?.DialogFontSize ?? 100));
+            AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
+                "automatictexturereplacer",
+                "showInGameSurfacesAsTargets",
+                settings?.ShowInGameSurfacesAsTargets ?? false));
+            AddBinding(m_ShowSpecialIndustrySurfacesAsTargets = new ValueBinding<bool>(
+                "automatictexturereplacer",
+                "showSpecialIndustrySurfacesAsTargets",
+                settings?.ShowSpecialIndustrySurfacesAsTargets ?? false));
+            AddBinding(m_ShowModSurfacesAsSources = new ValueBinding<bool>(
+                "automatictexturereplacer",
+                "showModSurfacesAsSources",
+                settings?.ShowModSurfacesAsSources ?? false));
+            AddBinding(m_ShowRevertAllButton = new ValueBinding<bool>(
+                "automatictexturereplacer",
+                "showRevertAllButton",
+                settings?.ShowRevertAllButton ?? false));
             AddBinding(m_SurfacePickerX = new ValueBinding<int>("automatictexturereplacer", "surfacePickerX", settings?.SurfacePickerX ?? -1));
             AddBinding(m_SurfacePickerY = new ValueBinding<int>("automatictexturereplacer", "surfacePickerY", settings?.SurfacePickerY ?? -1));
             AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("automatictexturereplacer", "surfacePickerWidth", settings?.SurfacePickerWidth ?? 920));
@@ -82,6 +110,7 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
+            AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllSurfaces", RevertAllSurfaces));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
         }
@@ -90,11 +119,36 @@ namespace AutomaticTextureReplacer
         {
             base.OnUpdate();
 
-            // Build the picker catalog as soon as prefab data is available, rather than
-            // making the player wait for the first Edit click.
-            if (!m_SurfaceCatalogLoaded && !m_SurfaceQuery.IsEmptyIgnoreFilter)
+            // Wait until a map has finished loading so all enabled mods have registered
+            // their prefabs. Capture game-owned data here, then sort the detached snapshot
+            // on a worker thread.
+            GameManager gameManager = GameManager.instance;
+            bool mapReady = gameManager != null &&
+                !gameManager.isGameLoading &&
+                gameManager.shouldUpdateWorld &&
+                (string.Equals(gameManager.gameMode.ToString(), "Game", StringComparison.Ordinal) ||
+                 string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
+            if (!m_SurfaceCatalogBuildStarted && mapReady && !m_SurfaceQuery.IsEmptyIgnoreFilter)
             {
-                RefreshSurfaceCatalog();
+                StartSurfaceCatalogBuild();
+            }
+
+            if (m_SurfaceCatalogBuildTask != null && m_SurfaceCatalogBuildTask.IsCompleted)
+            {
+                if (m_SurfaceCatalogBuildTask.Status == TaskStatus.RanToCompletion)
+                {
+                    m_SurfaceCatalog.Update(m_SurfaceCatalogBuildTask.Result);
+                    Mod.Log.InfoFormat(
+                        "Surface catalog cached after map load: surfaces={0}, modSurfaces={1}",
+                        m_SurfaceCatalogSurfaceCount,
+                        m_SurfaceCatalogModSurfaceCount);
+                }
+                else if (m_SurfaceCatalogBuildTask.IsFaulted)
+                {
+                    Mod.Log.Error(m_SurfaceCatalogBuildTask.Exception, "Surface catalog background processing failed");
+                }
+
+                m_SurfaceCatalogBuildTask = null;
             }
 
             int fontSize = Mod.Settings?.DialogFontSize ?? 100;
@@ -102,6 +156,34 @@ namespace AutomaticTextureReplacer
             {
                 m_LastDialogFontSize = fontSize;
                 m_DialogFontSize.Update(fontSize);
+            }
+
+            bool showInGameTargets = Mod.Settings?.ShowInGameSurfacesAsTargets ?? false;
+            if (showInGameTargets != m_LastShowInGameSurfacesAsTargets)
+            {
+                m_LastShowInGameSurfacesAsTargets = showInGameTargets;
+                m_ShowInGameSurfacesAsTargets.Update(showInGameTargets);
+            }
+
+            bool showSpecialIndustryTargets = Mod.Settings?.ShowSpecialIndustrySurfacesAsTargets ?? false;
+            if (showSpecialIndustryTargets != m_LastShowSpecialIndustrySurfacesAsTargets)
+            {
+                m_LastShowSpecialIndustrySurfacesAsTargets = showSpecialIndustryTargets;
+                m_ShowSpecialIndustrySurfacesAsTargets.Update(showSpecialIndustryTargets);
+            }
+
+            bool showModSources = Mod.Settings?.ShowModSurfacesAsSources ?? false;
+            if (showModSources != m_LastShowModSurfacesAsSources)
+            {
+                m_LastShowModSurfacesAsSources = showModSources;
+                m_ShowModSurfacesAsSources.Update(showModSources);
+            }
+
+            bool showRevertAllButton = Mod.Settings?.ShowRevertAllButton ?? false;
+            if (showRevertAllButton != m_LastShowRevertAllButton)
+            {
+                m_LastShowRevertAllButton = showRevertAllButton;
+                m_ShowRevertAllButton.Update(showRevertAllButton);
             }
         }
 
@@ -157,10 +239,6 @@ namespace AutomaticTextureReplacer
 
         private void OpenSurfacePicker(string contextJson)
         {
-            if (!m_SurfaceCatalogLoaded)
-            {
-                RefreshSurfaceCatalog();
-            }
             if (Mod.Settings != null)
             {
                 Mod.Settings.SurfacePickerContextJson = contextJson ?? "";
@@ -194,6 +272,11 @@ namespace AutomaticTextureReplacer
             SurfaceReplacementSystem.QueueReplacement(requestedRuleId, Mod.Settings.RulesJson);
         }
 
+        private void RevertAllSurfaces()
+        {
+            SurfaceReplacementSystem.QueueRevertAll();
+        }
+
         private void CloseSurfacePicker()
         {
             if (Mod.Settings != null)
@@ -204,17 +287,18 @@ namespace AutomaticTextureReplacer
             m_SurfacePickerOpen.Update(false);
         }
 
-        private void RefreshSurfaceCatalog()
+        private void StartSurfaceCatalogBuild()
         {
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
             if (prefabSystem == null || m_SurfaceQuery.IsEmptyIgnoreFilter)
             {
-                m_SurfaceCatalog.Update("[]");
                 return;
             }
 
+            m_SurfaceCatalogBuildStarted = true;
             List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            int modSurfaceCount = 0;
             using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in entities)
@@ -238,6 +322,12 @@ namespace AutomaticTextureReplacer
 
                     string group = GetSurfaceGroup(prefab);
                     string menuPath = GetSurfaceMenuPath(prefab);
+                    bool isMod = !prefab.isBuiltin;
+                    if (isMod)
+                    {
+                        modSurfaceCount++;
+                    }
+
                     catalog.Add(new Dictionary<string, string>
                     {
                         ["id"] = id,
@@ -246,14 +336,22 @@ namespace AutomaticTextureReplacer
                         ["tooltipThumbnail"] = GetLargeThumbnail(prefab),
                         ["group"] = group,
                         ["menuPath"] = menuPath,
-                        ["isMod"] = (!prefab.isBuiltin).ToString(),
+                        ["isMod"] = isMod.ToString(),
                     });
                 }
             }
 
-            catalog = catalog.OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase).ToList();
-            m_SurfaceCatalog.Update(JSON.Dump(catalog));
-            m_SurfaceCatalogLoaded = true;
+            Mod.Log.InfoFormat(
+                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}",
+                catalog.Count,
+                modSurfaceCount,
+                m_SurfaceQuery.CalculateEntityCount());
+            m_SurfaceCatalogSurfaceCount = catalog.Count;
+            m_SurfaceCatalogModSurfaceCount = modSurfaceCount;
+            m_SurfaceCatalogBuildTask = Task.Run(() => catalog
+                .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
+                .ToList())
+                .ContinueWith(task => JSON.Dump(task.GetAwaiter().GetResult()), TaskScheduler.Default);
         }
 
         private static bool IsExcludedSurfaceName(string name)

@@ -8,11 +8,15 @@ using Game;
 using Game.Areas;
 using Game.Buildings;
 using Game.Common;
+using Game.Objects;
 using Game.Prefabs;
 using Game.Rendering;
 using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
+using PrefabSubArea = Game.Prefabs.SubArea;
+using PrefabSubAreaNode = Game.Prefabs.SubAreaNode;
 
 namespace AutomaticTextureReplacer
 {
@@ -22,6 +26,13 @@ namespace AutomaticTextureReplacer
         {
             public string RuleId;
             public string RulesJson;
+            public bool RevertAll;
+        }
+
+        private sealed class PendingRevertChange
+        {
+            public Entity Area;
+            public Entity DefaultPrefab;
         }
 
         private sealed class PendingBatchDiagnostic
@@ -48,6 +59,7 @@ namespace AutomaticTextureReplacer
         private static readonly object s_RequestLock = new object();
         private static readonly Queue<ReplacementRequest> s_Requests = new Queue<ReplacementRequest>();
         private readonly List<PendingBatchDiagnostic> m_PendingBatchDiagnostics = new List<PendingBatchDiagnostic>();
+        private readonly List<PendingRevertChange> m_PendingRevertChanges = new List<PendingRevertChange>();
 
         private EntityQuery m_SurfacePrefabQuery;
         private EntityQuery m_SurfaceAreaQuery;
@@ -69,6 +81,7 @@ namespace AutomaticTextureReplacer
                 {
                     RuleId = requestedRuleId ?? "",
                     RulesJson = rulesJson ?? "[]",
+                    RevertAll = false,
                 });
             }
 
@@ -76,6 +89,21 @@ namespace AutomaticTextureReplacer
                 "Surface replacement request queued: mode={0}, ruleId={1}",
                 string.IsNullOrWhiteSpace(requestedRuleId) ? "Replace All" : "single rule",
                 string.IsNullOrWhiteSpace(requestedRuleId) ? "all enabled" : requestedRuleId);
+        }
+
+        public static void QueueRevertAll()
+        {
+            lock (s_RequestLock)
+            {
+                s_Requests.Enqueue(new ReplacementRequest
+                {
+                    RuleId = "",
+                    RulesJson = "[]",
+                    RevertAll = true,
+                });
+            }
+
+            Mod.Log.Info("Revert All request queued");
         }
 
         protected override void OnCreate()
@@ -115,10 +143,18 @@ namespace AutomaticTextureReplacer
 
         protected override void OnUpdate()
         {
+            ProcessPendingRevertRefresh();
             LogPendingBatchDiagnostics();
             while (TryDequeue(out ReplacementRequest request))
             {
-                ProcessReplacement(request);
+                if (request.RevertAll)
+                {
+                    ProcessRevertAll();
+                }
+                else
+                {
+                    ProcessReplacement(request);
+                }
             }
         }
 
@@ -144,6 +180,381 @@ namespace AutomaticTextureReplacer
 
             request = null;
             return false;
+        }
+
+        private void ProcessRevertAll()
+        {
+            int scanned = 0;
+            int alreadyDefault = 0;
+            int changed = 0;
+            int noDefaultMapping = 0;
+            int skippedExamples = 0;
+            System.Random random = new System.Random();
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            using (NativeArray<Entity> areaEntities = m_SurfaceAreaQuery.ToEntityArray(Allocator.Temp))
+            {
+                scanned = areaEntities.Length;
+                foreach (Entity area in areaEntities)
+                {
+                    PrefabRef currentRef = EntityManager.GetComponentData<PrefabRef>(area);
+                    if (!TryGetDefaultSurfacePrefab(area, currentRef.m_Prefab, random, out Entity owner, out int slot, out Entity defaultPrefab, out bool matchesDefault))
+                    {
+                        noDefaultMapping++;
+                        if (skippedExamples < 12)
+                        {
+                            Entity currentPrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                            Mod.Log.WarnFormat(
+                                "Revert All skipped area without a matching asset sub-area: area={0}, currentSurface='{1}'",
+                                area,
+                                m_PrefabSystem.GetPrefabName(currentPrefab));
+                            skippedExamples++;
+                        }
+                        continue;
+                    }
+
+                    if (matchesDefault || currentRef.m_Prefab == defaultPrefab)
+                    {
+                        alreadyDefault++;
+                        continue;
+                    }
+
+                    string previousName = m_PrefabSystem.GetPrefabName(currentRef.m_Prefab);
+                    string defaultName = m_PrefabSystem.GetPrefabName(defaultPrefab);
+                    commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = defaultPrefab });
+                    if (!EntityManager.HasComponent<Updated>(area))
+                    {
+                        commandBuffer.AddComponent<Updated>(area);
+                    }
+                    m_PendingRevertChanges.Add(new PendingRevertChange
+                    {
+                        Area = area,
+                        DefaultPrefab = defaultPrefab,
+                    });
+                    changed++;
+                    Mod.Log.InfoFormat(
+                        "Surface revert scheduled: area={0}, owner={1}, assetSubAreaIndex={2}, previous='{3}', default='{4}'",
+                        area,
+                        owner,
+                        slot,
+                        previousName,
+                        defaultName);
+                }
+            }
+
+            Mod.Log.InfoFormat(
+                "Revert All scan finished: surfaceAreas={0}, changed={1}, alreadyDefault={2}, noDefaultMapping={3}",
+                scanned,
+                changed,
+                alreadyDefault,
+                noDefaultMapping);
+        }
+
+        private bool TryGetDefaultSurfacePrefab(
+            Entity area,
+            Entity currentSurface,
+            System.Random random,
+            out Entity owner,
+            out int slot,
+            out Entity defaultPrefab,
+            out bool matchesDefault)
+        {
+            owner = Entity.Null;
+            slot = -1;
+            defaultPrefab = Entity.Null;
+            matchesDefault = false;
+            if (!EntityManager.HasBuffer<Game.Areas.Node>(area))
+            {
+                return false;
+            }
+
+            DynamicBuffer<Game.Areas.Node> areaNodes = EntityManager.GetBuffer<Game.Areas.Node>(area, true);
+            Entity child = area;
+            for (int depth = 0; depth < 16 && child != Entity.Null; depth++)
+            {
+                if (!EntityManager.HasComponent<Owner>(child))
+                {
+                    break;
+                }
+
+                Entity candidateOwner = EntityManager.GetComponentData<Owner>(child).m_Owner;
+                if (candidateOwner == Entity.Null)
+                {
+                    break;
+                }
+
+                if (EntityManager.HasComponent<Game.Objects.Transform>(candidateOwner) && EntityManager.HasComponent<PrefabRef>(candidateOwner))
+                {
+                    Entity ownerPrefab = EntityManager.GetComponentData<PrefabRef>(candidateOwner).m_Prefab;
+                    if (EntityManager.HasBuffer<PrefabSubArea>(ownerPrefab) && EntityManager.HasBuffer<PrefabSubAreaNode>(ownerPrefab))
+                    {
+                        DynamicBuffer<PrefabSubArea> prefabSubAreas = EntityManager.GetBuffer<PrefabSubArea>(ownerPrefab, true);
+                        DynamicBuffer<PrefabSubAreaNode> prefabNodes = EntityManager.GetBuffer<PrefabSubAreaNode>(ownerPrefab, true);
+                        Game.Objects.Transform ownerTransform = EntityManager.GetComponentData<Game.Objects.Transform>(candidateOwner);
+                        int runtimeIndex = -1;
+                        if (EntityManager.HasBuffer<Game.Areas.SubArea>(candidateOwner))
+                        {
+                            DynamicBuffer<Game.Areas.SubArea> runtimeSubAreas = EntityManager.GetBuffer<Game.Areas.SubArea>(candidateOwner, true);
+                            for (int runtimeSlot = 0; runtimeSlot < runtimeSubAreas.Length; runtimeSlot++)
+                            {
+                                if (runtimeSubAreas[runtimeSlot].m_Area == area)
+                                {
+                                    runtimeIndex = runtimeSlot;
+                                    break;
+                                }
+                            }
+                        }
+
+                        float bestDistance = float.MaxValue;
+                        int bestSlot = -1;
+                        Entity bestDefaultSurface = Entity.Null;
+                        bool bestMatchesDefault = false;
+                        for (int i = 0; i < prefabSubAreas.Length; i++)
+                        {
+                            int2 nodeRange = prefabSubAreas[i].m_NodeRange;
+                            float distance = GetSubAreaGeometryDistance(areaNodes, ownerTransform, prefabNodes, nodeRange);
+                            Mod.Log.InfoFormat(
+                                "Revert geometry candidate: area={0}, owner={1}, ownerAsset='{2}', runtimeIndex={3}, slot={4}, areaNodes={5}, range=({6},{7}), meanBoundaryDistance={8:F3}m",
+                                area,
+                                candidateOwner,
+                                m_PrefabSystem.GetPrefabName(ownerPrefab),
+                                runtimeIndex,
+                                i,
+                                areaNodes.Length,
+                                nodeRange.x,
+                                nodeRange.y,
+                                distance);
+                            if (distance == float.MaxValue)
+                            {
+                                continue;
+                            }
+
+                            Entity candidatePrefab = prefabSubAreas[i].m_Prefab;
+                            if (TryResolveConcreteSurface(candidatePrefab, currentSurface, random, out Entity concreteSurface, out bool candidateMatchesDefault) &&
+                                (distance < bestDistance ||
+                                 (math.abs(distance - bestDistance) <= 0.0001f && candidateMatchesDefault && !bestMatchesDefault)))
+                            {
+                                bestDistance = distance;
+                                bestSlot = i;
+                                bestDefaultSurface = concreteSurface;
+                                bestMatchesDefault = candidateMatchesDefault;
+                            }
+                        }
+
+                        if (bestSlot >= 0)
+                        {
+                            owner = candidateOwner;
+                            slot = bestSlot;
+                            defaultPrefab = bestDefaultSurface;
+                            matchesDefault = bestMatchesDefault;
+                            Mod.Log.InfoFormat(
+                                "Revert geometry selected: area={0}, owner={1}, slot={2}, meanBoundaryDistance={3:F3}m, default='{4}'",
+                                area,
+                                owner,
+                                slot,
+                                bestDistance,
+                                m_PrefabSystem.GetPrefabName(defaultPrefab));
+                            return true;
+                        }
+                    }
+                }
+
+                child = candidateOwner;
+            }
+
+            return false;
+        }
+
+        private float GetSubAreaGeometryDistance(
+            DynamicBuffer<Game.Areas.Node> areaNodes,
+            Game.Objects.Transform ownerTransform,
+            DynamicBuffer<PrefabSubAreaNode> prefabNodes,
+            int2 nodeRange)
+        {
+            if (nodeRange.x < 0 || nodeRange.y <= nodeRange.x || nodeRange.y > prefabNodes.Length ||
+                areaNodes.Length < 3)
+            {
+                return float.MaxValue;
+            }
+
+            int prefabNodeCount = nodeRange.y - nodeRange.x;
+            float totalDistance = 0f;
+            for (int i = 0; i < areaNodes.Length; i++)
+            {
+                totalDistance += GetPointToPrefabPolygonDistance(
+                    areaNodes[i].m_Position.xz,
+                    ownerTransform,
+                    prefabNodes,
+                    nodeRange,
+                    prefabNodeCount);
+            }
+
+            for (int i = 0; i < prefabNodeCount; i++)
+            {
+                float2 point = ObjectUtils.LocalToWorld(
+                    ownerTransform,
+                    prefabNodes[nodeRange.x + i].m_Position).xz;
+                totalDistance += GetPointToAreaPolygonDistance(point, areaNodes);
+            }
+
+            return totalDistance / (areaNodes.Length + prefabNodeCount);
+        }
+
+        private static float GetPointToPrefabPolygonDistance(
+            float2 point,
+            Game.Objects.Transform transform,
+            DynamicBuffer<PrefabSubAreaNode> nodes,
+            int2 nodeRange,
+            int count)
+        {
+            float bestDistanceSquared = float.MaxValue;
+            for (int i = 0; i < count; i++)
+            {
+                float2 a = ObjectUtils.LocalToWorld(transform, nodes[nodeRange.x + i].m_Position).xz;
+                float2 b = ObjectUtils.LocalToWorld(transform, nodes[nodeRange.x + (i + 1) % count].m_Position).xz;
+                bestDistanceSquared = math.min(bestDistanceSquared, DistanceToSegmentSquared(point, a, b));
+            }
+
+            return math.sqrt(bestDistanceSquared);
+        }
+
+        private static float GetPointToAreaPolygonDistance(float2 point, DynamicBuffer<Game.Areas.Node> nodes)
+        {
+            float bestDistanceSquared = float.MaxValue;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                float2 a = nodes[i].m_Position.xz;
+                float2 b = nodes[(i + 1) % nodes.Length].m_Position.xz;
+                bestDistanceSquared = math.min(bestDistanceSquared, DistanceToSegmentSquared(point, a, b));
+            }
+
+            return math.sqrt(bestDistanceSquared);
+        }
+
+        private static float DistanceToSegmentSquared(float2 point, float2 a, float2 b)
+        {
+            float2 edge = b - a;
+            float edgeLengthSquared = math.lengthsq(edge);
+            float t = edgeLengthSquared > 0f
+                ? math.saturate(math.dot(point - a, edge) / edgeLengthSquared)
+                : 0f;
+            return math.distancesq(point, a + edge * t);
+        }
+
+        private bool TryResolveConcreteSurface(
+            Entity assetSurface,
+            Entity currentSurface,
+            System.Random random,
+            out Entity concreteSurface,
+            out bool matchesDefault)
+        {
+            concreteSurface = Entity.Null;
+            matchesDefault = false;
+            if (assetSurface == Entity.Null)
+            {
+                return false;
+            }
+
+            if (EntityManager.HasBuffer<PlaceholderObjectElement>(assetSurface))
+            {
+                DynamicBuffer<PlaceholderObjectElement> variants = EntityManager.GetBuffer<PlaceholderObjectElement>(assetSurface, true);
+                List<KeyValuePair<Entity, int>> candidates = new List<KeyValuePair<Entity, int>>();
+                int totalWeight = 0;
+                bool currentIsVariant = false;
+                for (int i = 0; i < variants.Length; i++)
+                {
+                    Entity variant = variants[i].m_Object;
+                    if (variant == Entity.Null || !EntityManager.HasComponent<SurfaceData>(variant) ||
+                        IsExcludedSurfaceName(m_PrefabSystem.GetPrefabName(variant)))
+                    {
+                        continue;
+                    }
+
+                    int weight = EntityManager.HasComponent<SpawnableObjectData>(variant)
+                        ? Math.Max(0, EntityManager.GetComponentData<SpawnableObjectData>(variant).m_Probability)
+                        : 1;
+                    if (weight == 0)
+                    {
+                        continue;
+                    }
+
+                    candidates.Add(new KeyValuePair<Entity, int>(variant, weight));
+                    totalWeight += weight;
+                    currentIsVariant |= variant == currentSurface;
+                }
+
+                if (candidates.Count == 0)
+                {
+                    return false;
+                }
+
+                if (currentIsVariant)
+                {
+                    concreteSurface = currentSurface;
+                    matchesDefault = true;
+                    return true;
+                }
+
+                int choice = random.Next(totalWeight);
+                foreach (KeyValuePair<Entity, int> candidate in candidates)
+                {
+                    if (choice < candidate.Value)
+                    {
+                        concreteSurface = candidate.Key;
+                        return true;
+                    }
+
+                    choice -= candidate.Value;
+                }
+
+                concreteSurface = candidates[candidates.Count - 1].Key;
+                return true;
+            }
+
+            if (EntityManager.HasComponent<SurfaceData>(assetSurface) &&
+                !IsExcludedSurfaceName(m_PrefabSystem.GetPrefabName(assetSurface)))
+            {
+                concreteSurface = assetSurface;
+                matchesDefault = assetSurface == currentSurface;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ProcessPendingRevertRefresh()
+        {
+            if (m_PendingRevertChanges.Count == 0)
+            {
+                return;
+            }
+
+            int applied = 0;
+            int missing = 0;
+            foreach (PendingRevertChange change in m_PendingRevertChanges)
+            {
+                if (!EntityManager.Exists(change.Area) || !EntityManager.HasComponent<PrefabRef>(change.Area))
+                {
+                    missing++;
+                    continue;
+                }
+
+                if (EntityManager.GetComponentData<PrefabRef>(change.Area).m_Prefab == change.DefaultPrefab)
+                {
+                    applied++;
+                }
+            }
+
+            if (applied == 0 && missing < m_PendingRevertChanges.Count)
+            {
+                return;
+            }
+
+            Mod.Log.InfoFormat(
+                "Revert All prefab updates applied: applied={0}, missing={1}; rebuilding area render batches",
+                applied,
+                missing);
+            RebuildAreaBatchCaches();
+            m_PendingRevertChanges.Clear();
         }
 
         private void ProcessReplacement(ReplacementRequest request)

@@ -16,6 +16,66 @@ const register = (moduleRegistry) => {
 
   const { bindValue, trigger, useValue } = api;
   const h = React.createElement;
+  const BUTTON_STYLE = Object.freeze({
+    standard: "standard",
+    pickerGlobal: "pickerGlobal",
+  });
+  const BUTTON_STYLE_DEFINITIONS = Object.freeze({
+    [BUTTON_STYLE.standard]: ({ fontSize }) => ({
+      outer: { margin: "8rem" },
+      button: { fontSize, padding: "6rem 14rem" },
+    }),
+    [BUTTON_STYLE.pickerGlobal]: ({ fontSize, scale }) => ({
+      outer: { margin: `${3 * scale}rem` },
+      button: { fontSize, padding: `${6 * scale}rem ${14 * scale}rem` },
+    }),
+  });
+  const createButton = (label, onSelect, options = {}) => {
+    const {
+      variant = "flat",
+      title,
+      className,
+      outerClassName: customOuterClassName,
+      buttonProps = {},
+      fontSize,
+      style = BUTTON_STYLE.standard,
+      scale = 1,
+    } = options;
+    const buttonClassName = ["atrGameButton", className].filter(Boolean).join(" ");
+    const outerClassName = ["atrButtonOuter", customOuterClassName].filter(Boolean).join(" ");
+    const styleDefinition = BUTTON_STYLE_DEFINITIONS[style] || BUTTON_STYLE_DEFINITIONS[BUTTON_STYLE.standard];
+    const resolvedStyle = styleDefinition({ fontSize, scale });
+    const outerStyle = resolvedStyle.outer;
+    const buttonStyle = resolvedStyle.button;
+    const button = ui.Button
+      ? h(ui.Button, {
+        ...buttonProps,
+        variant,
+        focusKey: FocusDisabled,
+        title,
+        tooltipLabel: title,
+        onSelect,
+        className: buttonClassName,
+        style: buttonStyle,
+      }, label)
+      : h("button", {
+        ...buttonProps,
+        type: "button",
+        title,
+        onClick: onSelect,
+        className: buttonClassName,
+        style: buttonStyle,
+      }, label);
+    return h("div", { className: outerClassName, style: outerStyle }, button);
+  };
+  const createTintedPrimaryButton = (label, onSelect, options = {}) => {
+    const { tone = "blue", className, ...buttonOptions } = options;
+    return createButton(label, onSelect, {
+      ...buttonOptions,
+      variant: "primary",
+      className: ["atrTintedPrimaryButton", `atrTintedPrimaryButton-${tone}`, className].filter(Boolean).join(" "),
+    });
+  };
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("automatictexturereplacer", "surfaceCatalog", "[]");
@@ -26,6 +86,10 @@ const register = (moduleRegistry) => {
   const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", 680);
   const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
+  const showInGameSurfacesAsTargets$ = bindValue("automatictexturereplacer", "showInGameSurfacesAsTargets", false);
+  const showSpecialIndustrySurfacesAsTargets$ = bindValue("automatictexturereplacer", "showSpecialIndustrySurfacesAsTargets", false);
+  const showModSurfacesAsSources$ = bindValue("automatictexturereplacer", "showModSurfacesAsSources", false);
+  const showRevertAllButton$ = bindValue("automatictexturereplacer", "showRevertAllButton", false);
   const rulesJson$ = bindValue("automatictexturereplacer", "rulesJson", "[]");
   const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
     className: "atrSurfaceTooltip",
@@ -38,9 +102,6 @@ const register = (moduleRegistry) => {
 
   const RuleRow = React.memo(({ rule, deleteRule, setRuleEnabled, openSurfacePicker, catalogById, scaledFontSize, rowIndex }) => {
     const lastPickerOpenAt = React.useRef(0);
-    const gameButton = (label, onSelect, variant = "flat", title, className) => ui.Button
-      ? h(ui.Button, { variant, focusKey: FocusDisabled, title, tooltipLabel: title, onSelect, className, style: { fontSize: scaledFontSize } }, label)
-      : h("button", { title, onClick: onSelect, className, style: { fontSize: scaledFontSize } }, label);
     const openPickerOnce = (side) => {
       const now = Date.now();
       if (now - lastPickerOpenAt.current < 250) return;
@@ -63,17 +124,13 @@ const register = (moduleRegistry) => {
           ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize), delayTime: 0, hideOnInteraction: false }, framedIcon)
           : h("span", { key: surface.id, title: `${surface.name} — ${surface.group || "In-game"}` }, framedIcon);
       });
-      const editButton = ui.Button
-          ? h(ui.Button, {
-            variant: "flat",
-            focusKey: FocusDisabled,
-            title,
-            tooltipLabel: title,
-            className: "atrEditButton",
-            style: { fontSize: scaledFontSize },
-            onSelect: () => openPickerOnce(side),
-          }, "Edit")
-          : gameButton("Edit", () => openPickerOnce(side), "flat", title, "atrEditButton");
+      const editButton = createButton("Edit", () => openPickerOnce(side), {
+        variant: "primary",
+        title,
+        className: "atrEditButton",
+        fontSize: scaledFontSize,
+        style: BUTTON_STYLE.standard,
+      });
       return h("div", {
         className: "atrSurfaceGroup atrRuleSurfaceCell",
         onMouseDownCapture: (event) => {
@@ -84,8 +141,20 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, icons)));
     };
     const actions = h("div", { className: "atrRuleActions" },
-      gameButton("Replace", () => trigger("automatictexturereplacer", "replaceSurfaces", String(rule.id)), "primary", "Replace rule", "atrReplaceButton"),
-      gameButton("×", () => deleteRule(rule.id), "flat", "Delete rule", "atrDeleteRuleButton"));
+      createButton("Replace", () => trigger("automatictexturereplacer", "replaceSurfaces", String(rule.id)), {
+        variant: "primary",
+        title: "Replace rule",
+        className: "atrReplaceButton",
+        fontSize: scaledFontSize,
+        style: BUTTON_STYLE.standard,
+      }),
+      createButton("×", () => deleteRule(rule.id), {
+        variant: "primary",
+        title: "Delete rule",
+        className: "atrDeleteRuleButton",
+        fontSize: scaledFontSize,
+        style: BUTTON_STYLE.standard,
+      }));
 
     return h("div", {
       className: "atrRuleRow" + (rowIndex % 2 ? " atrRuleRowAlternate" : ""),
@@ -138,6 +207,9 @@ const register = (moduleRegistry) => {
     const savedWidth = useValue(surfacePickerWidth$);
     const savedHeight = useValue(surfacePickerHeight$);
     const fontSize = useValue(dialogFontSize$);
+    const showInGameSurfacesAsTargets = useValue(showInGameSurfacesAsTargets$);
+    const showSpecialIndustrySurfacesAsTargets = useValue(showSpecialIndustrySurfacesAsTargets$);
+    const showModSurfacesAsSources = useValue(showModSurfacesAsSources$);
     const catalogJson = useValue(surfaceCatalog$);
     const contextJson = useValue(surfacePickerContext$);
     const rulesJson = useValue(rulesJson$);
@@ -164,9 +236,26 @@ const register = (moduleRegistry) => {
         return {};
       }
     }, [contextJson]);
+    const targetPicker = pickerContext.side === "target";
+    const pickerCatalog = React.useMemo(() => {
+      if (targetPicker) {
+        return catalog.filter((surface) => {
+          const groupName = surface.group || "In-game asset";
+          if (groupName === "In-game" && !showInGameSurfacesAsTargets) return selectedIds.has(surface.id);
+          if (groupName === "Special Industries" && !showSpecialIndustrySurfacesAsTargets) return selectedIds.has(surface.id);
+          return true;
+        });
+      }
+
+      if (!showModSurfacesAsSources) {
+        return catalog.filter((surface) =>
+          (surface.isMod !== true && surface.isMod !== "True") || selectedIds.has(surface.id));
+      }
+      return catalog;
+    }, [catalog, targetPicker, showInGameSurfacesAsTargets, showSpecialIndustrySurfacesAsTargets, showModSurfacesAsSources, selectedIds]);
     const groups = React.useMemo(() => {
       const grouped = new Map();
-      catalog.forEach((surface) => {
+      pickerCatalog.forEach((surface) => {
         const name = surface.group || "In-game asset";
         if (!grouped.has(name)) grouped.set(name, []);
         grouped.get(name).push(surface);
@@ -177,9 +266,11 @@ const register = (moduleRegistry) => {
           const order = priority(first.name) - priority(second.name);
           return order || first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
         });
-    }, [catalog]);
+    }, [pickerCatalog]);
     React.useEffect(() => {
       if (open) {
+        // Keep selections that are currently filtered out. They remain part of the rule
+        // and can be removed later by enabling their category in mod settings.
         setSelectedIds(new Set(pickerContext.selectedIds || []));
         lastSelection.current = null;
       }
@@ -240,9 +331,13 @@ const register = (moduleRegistry) => {
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
-    const button = (label, onSelect, variant, className, extraStyle = {}) => ui.Button
-      ? h(ui.Button, { variant, className, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize, ...extraStyle } }, label)
-      : h("button", { className, onClick: onSelect, style: { fontSize: scaledFontSize, ...extraStyle } }, label);
+    const spacingScale = fontSize / 100;
+    const button = (label, onSelect, variant = "flat", className, style = BUTTON_STYLE.standard) => {
+      const options = { className, fontSize: scaledFontSize, style, scale: spacingScale };
+      return variant === "primary"
+        ? createButton(label, onSelect, { ...options, variant })
+        : createTintedPrimaryButton(label, onSelect, options);
+    };
     const closePicker = () => trigger("automatictexturereplacer", "closeSurfacePicker");
     const applySelection = () => {
       const selectedIdsArray = Array.from(selectedIds);
@@ -342,21 +437,13 @@ const register = (moduleRegistry) => {
     const sections = groups.map((group) => {
       const collapsed = !!collapsedGroups[group.name];
       const toggle = () => setCollapsedGroups((current) => ({ ...current, [group.name]: !current[group.name] }));
-      const groupToggle = ui.Button
-        ? h(ui.Button, {
-          variant: "flat",
-          className: "atrPickerGroupToggle",
-          focusKey: FocusDisabled,
-          onSelect: toggle,
-          "aria-expanded": !collapsed,
-        },
+      const groupToggle = h("div", {
+        className: "atrPickerGroupToggle",
+        onClick: toggle,
+      },
         h("span", { className: "atrPickerGroupArrow", "aria-hidden": true }, collapsed ? "▲" : "▼"),
         h("strong", null, group.name),
-        h("span", { className: "atrPickerGroupCount" }, String(group.surfaces.length)))
-        : h("button", { className: "atrPickerGroupToggle", onClick: toggle, "aria-expanded": !collapsed },
-          h("span", { className: "atrPickerGroupArrow", "aria-hidden": true }, collapsed ? "▲" : "▼"),
-          h("strong", null, group.name),
-          h("span", { className: "atrPickerGroupCount" }, String(group.surfaces.length)));
+        h("span", { className: "atrPickerGroupCount" }, String(group.surfaces.length)));
       const groupButtons = h("div", { className: "atrPickerGroupActions" },
         button("Select all", () => selectGroup(group, true), "flat"),
         button("Deselect all", () => selectGroup(group, false), "flat"));
@@ -372,30 +459,30 @@ const register = (moduleRegistry) => {
       width: dimensions.width + "px",
       height: dimensions.height + "px",
     };
-    const spacingScale = fontSize / 100;
-    const globalButtonStyle = {
-      padding: `${6 * spacingScale}rem ${14 * spacingScale}rem`,
-      margin: `${3 * spacingScale}rem`,
-    };
     const groupControls = h("div", {
       className: "atrPickerGlobalActions",
       style: { gap: `${8 * spacingScale}rem` },
     },
-    button("Expand all", () => setAllGroupsCollapsed(false), "flat", "atrPickerGlobalButton", globalButtonStyle),
-    button("Collapse all", () => setAllGroupsCollapsed(true), "flat", "atrPickerGlobalButton", globalButtonStyle),
+    button("Expand all", () => setAllGroupsCollapsed(false), "flat", "atrPickerGlobalButton", BUTTON_STYLE.pickerGlobal),
+    button("Collapse all", () => setAllGroupsCollapsed(true), "flat", "atrPickerGlobalButton", BUTTON_STYLE.pickerGlobal),
     button("Deselect all", () => {
-      setSelectedIds(new Set());
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        pickerCatalog.forEach((surface) => next.delete(surface.id));
+        return next;
+      });
       lastSelection.current = null;
-    }, "flat", "atrPickerGlobalButton", globalButtonStyle));
+    }, "flat", "atrPickerGlobalButton", BUTTON_STYLE.pickerGlobal));
+    const footer = h("div", { className: "atrPickerFooter" },
+      button("Apply", applySelection, "primary"),
+      button("Cancel", closePicker, "flat"));
     const body = h("div", { className: "atrPickerBody", style: { fontSize: scaledFontSize } },
       groupControls,
       catalog.length === 0
         ? h("div", { className: "atrPickerEmpty" }, "No surfaces found.")
         : h(ui.Scrollable || "div", { className: "atrPickerScroll", vertical: true, useNewStyle: true },
-          h("div", { className: "atrPickerGroups" }, sections)));
-    const footer = h("div", { className: "atrPickerFooter" },
-      button("Apply", applySelection, "primary"),
-      button("Cancel", closePicker, "flat"));
+          h("div", { className: "atrPickerGroups" }, sections)),
+      footer);
     const resizeCorners = h(React.Fragment, null,
       h("div", { className: "atrPickerResizeCorner atrResizeLeft", onMouseDown: (event) => beginResize(event, true), title: "Drag this corner to resize" }),
       h("div", { className: "atrPickerResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
@@ -406,7 +493,6 @@ const register = (moduleRegistry) => {
         contentClassName: "atrPickerPanelContent",
       header: h("div", { className: "atrDialogHeader atrPickerHeader", onMouseDownCapture: beginDrag }, "Select a surface"),
         onClose: closePicker,
-        footer,
       }, body), resizeCorners);
   };
 
@@ -417,6 +503,7 @@ const register = (moduleRegistry) => {
     const savedWidth = useValue(dialogWidth$);
     const savedHeight = useValue(dialogHeight$);
     const fontSize = useValue(dialogFontSize$);
+    const showRevertAllButton = useValue(showRevertAllButton$);
     const rulesJson = useValue(rulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
     const dialogRef = React.useRef(null);
@@ -567,14 +654,27 @@ const register = (moduleRegistry) => {
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
-    const gameButton = (label, onSelect, variant = "flat", className) => ui.Button
-      ? h(ui.Button, { variant, className, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize } }, label)
-      : h("button", { className, onClick: onSelect, style: { fontSize: scaledFontSize } }, label);
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
       h("div", { className: "atrRulesToolbar" },
-        gameButton("Replace All", () => trigger("automatictexturereplacer", "replaceSurfaces", ""), "primary"),
-        gameButton("Add", addRule, "primary")),
+        h("div", { className: "atrRulesToolbarLeft" },
+          createButton("Replace All", () => trigger("automatictexturereplacer", "replaceSurfaces", ""), {
+            variant: "primary",
+            fontSize: scaledFontSize,
+            style: BUTTON_STYLE.standard,
+          }),
+          showRevertAllButton && createButton("Revert All", () => trigger("automatictexturereplacer", "revertAllSurfaces"), {
+            variant: "primary",
+            className: "atrRevertAllButton",
+            fontSize: scaledFontSize,
+            style: BUTTON_STYLE.standard,
+          })),
+        createButton("Add", addRule, {
+          variant: "primary",
+          outerClassName: "atrAddRuleButton",
+          fontSize: scaledFontSize,
+          style: BUTTON_STYLE.standard,
+        })),
       h(ui.PanelSectionRow, {
         disableFocus: true,
         className: "atrRulesHeader",

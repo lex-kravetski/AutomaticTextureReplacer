@@ -9,7 +9,13 @@
 .atrCloseButton:hover{background:rgba(255,90,90,.45)}
 .atrDialogBody{position:relative;width:100%;height:100%;min-height:200rem;box-sizing:border-box;padding:8rem 10rem 14rem;color:rgba(255,255,255,.82);overflow:hidden}
 .atrActiveArea{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;padding:10rem;background:rgba(40,76,98,.32);border-radius:4rem;overflow:hidden}
-.atrRulesToolbar{display:flex;justify-content:flex-end;flex:0 0 auto;gap:8rem;margin-bottom:8rem}
+.atrRulesToolbar{display:flex;align-items:center;justify-content:space-between;flex:0 0 auto;margin-bottom:8rem}
+.atrRulesToolbarLeft{display:flex;align-items:center;gap:8rem}
+.atrRulesToolbar .atrButtonOuter{display:inline-flex;flex:0 0 auto;height:40rem;min-height:40rem;box-sizing:border-box;margin:8rem!important}
+.atrRulesToolbar .atrButtonOuter>.atrGameButton{display:flex!important;align-items:center!important;justify-content:center!important;height:100%!important;min-height:100%!important;box-sizing:border-box}
+.atrRulesToolbar>.atrButtonOuter.atrAddRuleButton{margin-left:auto!important}
+.atrEditButton{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
+.atrRevertAllButton,.atrDeleteRuleButton{background:#8e2632!important;border:2rem solid #ef7180!important;color:rgba(255,255,255,.98)!important}
 .atrRulesHeader{flex:0 0 auto;background:rgba(26,43,59,.62);color:rgba(255,255,255,.96);font-weight:600;border-bottom:1rem solid rgba(255,255,255,.12)}
 .atrRulesScroll{flex:1 1 auto;min-height:0;width:100%;overflow-x:hidden;overflow-y:hidden;background:rgba(82,117,139,.28);border-radius:3rem}
 .atrRuleRow{display:flex!important;min-width:0;width:100%;margin:3rem 2rem;box-sizing:border-box;flex-direction:row!important;align-items:flex-start!important;gap:10rem;padding:8rem;border:1rem solid rgba(175,211,228,.28);border-radius:3rem;background:rgba(43,72,91,.5)!important;color:rgba(239,248,252,.92)}
@@ -18,16 +24,20 @@
 .atrSurfaceGroup,.atrRuleActions,.atrHeaderSource{display:flex;flex-direction:row;align-items:flex-start;gap:8rem;white-space:nowrap}
 .atrRuleSurfaceCell{display:flex;min-width:0;flex:1 1 0;flex-direction:row;align-items:flex-start;gap:8rem;white-space:normal}
 .atrRuleEditCell{display:flex;flex:0 0 auto;align-items:flex-start}
+.atrRuleEditCell>.atrButtonOuter{height:38rem;margin:0!important}
+.atrRuleEditCell>.atrButtonOuter>.atrGameButton{height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRuleTileCell{display:flex;min-width:0;flex:1 1 0;align-items:flex-start}
 .atrRuleRow>.atrRuleSurfaceCell{flex:1 1 0}
 .atrRuleRow>.atrRuleActions{flex:0 0 auto;align-items:flex-start!important;margin:0 4rem}
+.atrRuleActions>.atrButtonOuter{display:inline-flex;flex:0 0 auto;align-self:flex-start;height:38rem;min-height:38rem;margin:0!important;box-sizing:border-box}
+.atrRuleActions>.atrButtonOuter>.atrGameButton{height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRuleSurfaceIcons{display:flex!important;min-width:0;width:100%;flex:0 0 auto;flex-direction:row!important;flex-wrap:wrap!important;align-content:flex-start;align-items:flex-start;justify-content:flex-start;gap:4rem}
 .atrRuleSurfaceIcons>*{display:flex!important;width:38rem!important;height:38rem!important;flex:0 0 38rem!important}
 .atrRuleSurfaceIconFrame{display:flex;width:38rem;height:38rem;flex:0 0 38rem;box-sizing:border-box;align-items:center;justify-content:center;border:1rem solid rgba(190,222,236,.42);border-radius:3rem;background:rgba(13,32,45,.55);overflow:hidden}
 .atrRuleSurfaceIcon{display:block;width:100%;height:100%;box-sizing:border-box;object-fit:contain}
 .atrEditButton,.atrReplaceButton,.atrDeleteRuleButton{height:38rem!important;min-height:38rem!important;box-sizing:border-box;align-items:center!important;justify-content:center!important}
 .atrEditButton{padding:0 10rem!important;border-radius:0!important;line-height:1.2}
-.atrDeleteRuleButton{min-width:30rem!important;margin:0 4rem!important;padding:0 5rem!important}
+.atrDeleteRuleButton{min-width:30rem!important;margin:0!important;padding:0 5rem!important}
 .atrReplaceButton{padding:0 10rem!important}
 .atrRuleCheckbox{width:38rem!important;height:38rem!important;min-width:38rem!important;min-height:38rem!important;flex:0 0 38rem}
 .atrCheckboxSpacer{display:block;width:22rem;flex:0 0 22rem}
@@ -37,15 +47,16 @@
 .atrResizeRight{right:0;cursor:nwse-resize}
 .atrPickerPositioner{z-index:1100;min-width:520rem;min-height:360rem}
 .atrPickerPanel{width:100%;height:100%}
-.atrPickerPanelContent{display:flex;flex:1 1 auto;min-height:0;overflow:hidden}
+.atrPickerPanelContent{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .atrPickerHeader{min-height:38rem;font-size:16rem;font-weight:600}
 .atrPickerBody{width:100%;height:100%;min-height:0;flex:1 1 auto;box-sizing:border-box;padding:8rem;display:flex;flex-direction:column;overflow:hidden;color:rgba(255,255,255,.9)}
-.atrPickerScroll{width:100%;height:100%;min-height:0;overflow:hidden}
+.atrPickerScroll{width:100%;height:0;min-height:0;flex:1 1 auto;overflow:hidden}
 .atrPickerGroups{padding:4rem}
 .atrPickerGroupSection{margin-bottom:8rem}
 .atrPickerGlobalActions{display:flex;flex:0 0 auto;flex-direction:row;justify-content:flex-end;gap:6rem;margin:0 4rem 6rem}
 .atrPickerGroupHeader{display:flex;width:100%;min-height:34rem;flex-direction:row;align-items:center;justify-content:flex-start;gap:6rem;box-sizing:border-box;margin-bottom:4rem;padding:4rem 6rem;background:rgba(26,43,59,.62);color:rgba(255,255,255,.94);text-align:left}
-.atrPickerGroupToggle{display:flex;min-width:0;min-height:30rem;flex:1 1 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:8rem;padding:2rem 4rem;background:transparent;color:rgba(255,255,255,.94);text-align:left}
+.atrPickerGroupToggle{display:flex;min-width:0;min-height:30rem;flex:1 1 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:8rem;padding:2rem 4rem;border:0;background:transparent;color:rgba(255,255,255,.94);text-align:left;cursor:pointer}
+.atrTintedPrimaryButton-blue{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
 .atrPickerGroupActions{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;gap:4rem}
 .atrPickerGroupActions button,.atrPickerGroupActions [role="button"]{padding:3rem 7rem;font-size:11rem}
 .atrPickerGroupArrow{width:16rem;flex:0 0 16rem;text-align:center;color:rgba(110,205,239,.96)}
@@ -58,7 +69,7 @@
 .atrSurfaceTooltip strong{color:rgba(255,255,255,.98)}
 .atrSurfaceTooltip span{color:rgba(255,255,255,.7)}
 .atrPickerEmpty{padding:12rem;color:rgba(255,255,255,.7)}
-.atrPickerFooter{display:flex;flex-direction:row;justify-content:flex-end;gap:8rem;margin:8rem 10rem 14rem;padding:4rem 8rem}
+.atrPickerFooter{display:flex;flex:0 0 auto;flex-direction:row;justify-content:flex-end;gap:8rem;box-sizing:border-box;margin:6rem -8rem -8rem;padding:14rem 18rem;background:rgba(18,27,34,.98)}
 .atrPickerResizeCorner{position:absolute;bottom:0;z-index:100;width:24rem;height:24rem;pointer-events:auto}
 .atrSurfaceTile{position:relative}
 .atrSurfaceTile>img:first-child{display:block;width:100%;height:100%;object-fit:contain}
