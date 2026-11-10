@@ -84,7 +84,7 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, icons)));
     };
     const actions = h("div", { className: "atrRuleActions" },
-      gameButton("Replace", () => {}, "primary", null, "atrReplaceButton"),
+      gameButton("Replace", () => trigger("automatictexturereplacer", "replaceSurfaces", String(rule.id)), "primary", "Replace rule", "atrReplaceButton"),
       gameButton("×", () => deleteRule(rule.id), "flat", "Delete rule", "atrDeleteRuleButton"));
 
     return h("div", {
@@ -567,12 +567,14 @@ const register = (moduleRegistry) => {
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
-    const gameButton = (label, onSelect, variant = "flat") => ui.Button
-      ? h(ui.Button, { variant, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize } }, label)
-      : h("button", { onClick: onSelect, style: { fontSize: scaledFontSize } }, label);
+    const gameButton = (label, onSelect, variant = "flat", className) => ui.Button
+      ? h(ui.Button, { variant, className, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize } }, label)
+      : h("button", { className, onClick: onSelect, style: { fontSize: scaledFontSize } }, label);
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
-      h("div", { className: "atrRulesToolbar" }, gameButton("Add", addRule, "primary")),
+      h("div", { className: "atrRulesToolbar" },
+        gameButton("Replace All", () => trigger("automatictexturereplacer", "replaceSurfaces", ""), "primary"),
+        gameButton("Add", addRule, "primary")),
       h(ui.PanelSectionRow, {
         disableFocus: true,
         className: "atrRulesHeader",

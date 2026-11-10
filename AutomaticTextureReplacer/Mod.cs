@@ -4,6 +4,8 @@ using Game.SceneFlow;
 using Colossal.IO.AssetDatabase;
 using Colossal.Logging;
 using Colossal.UI;
+using Game.Tools;
+using System;
 using System.IO;
 using System.Reflection;
 
@@ -20,6 +22,9 @@ namespace AutomaticTextureReplacer
 
         public void OnLoad(UpdateSystem updateSystem)
         {
+            ClearDiagnosticLog();
+            Log.Info("=== Automatic Texture Replacer session started ===");
+
             Settings = new AutomaticTextureReplacerSettings(this);
             Settings.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(Settings));
@@ -35,6 +40,7 @@ namespace AutomaticTextureReplacer
             }
 
             updateSystem.UpdateAt<AutomaticTextureReplacerUISystem>(SystemUpdatePhase.UIUpdate);
+            updateSystem.UpdateBefore<SurfaceReplacementSystem, ToolOutputBarrier>(SystemUpdatePhase.ToolUpdate);
         }
 
         public void OnDispose()
@@ -53,6 +59,28 @@ namespace AutomaticTextureReplacer
             ExecutableAsset modAsset = AssetDatabase.global.GetAsset(
                 SearchFilter<ExecutableAsset>.ByCondition(x => x.definition?.FullName == assemblyName));
             return modAsset == null ? null : Path.GetDirectoryName(modAsset.GetMeta().path);
+        }
+
+        private static void ClearDiagnosticLog()
+        {
+            string logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "AppData",
+                "LocalLow",
+                "Colossal Order",
+                "Cities Skylines II",
+                "Logs",
+                "AutomaticTextureReplacer.log");
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath));
+                File.WriteAllText(logPath, string.Empty);
+            }
+            catch (Exception exception)
+            {
+                Log.Warn(exception, "Could not clear the mod diagnostic log at startup");
+            }
         }
     }
 }

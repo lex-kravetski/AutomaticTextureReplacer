@@ -5,9 +5,11 @@ using System.Linq;
 using Colossal.Json;
 using Colossal.UI.Binding;
 using Game.Areas;
+using Game.Common;
 using Game.Modding;
 using Game.Prefabs;
 using Game.SceneFlow;
+using Game.Tools;
 using Game.UI;
 using Unity.Collections;
 using Unity.Entities;
@@ -71,7 +73,6 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
-
             AddBinding(new TriggerBinding("automatictexturereplacer", "toggleDialog", () =>
                 SetDialogOpen(Mod.Settings != null && !Mod.Settings.DialogOpen)));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeDialog", () => SetDialogOpen(false)));
@@ -80,6 +81,7 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "openSurfacePicker", OpenSurfacePicker));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
         }
@@ -182,6 +184,16 @@ namespace AutomaticTextureReplacer
             m_RulesJson.Update(json);
         }
 
+        private void ReplaceSurfaces(string requestedRuleId)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            SurfaceReplacementSystem.QueueReplacement(requestedRuleId, Mod.Settings.RulesJson);
+        }
+
         private void CloseSurfacePicker()
         {
             if (Mod.Settings != null)
@@ -226,16 +238,6 @@ namespace AutomaticTextureReplacer
 
                     string group = GetSurfaceGroup(prefab);
                     string menuPath = GetSurfaceMenuPath(prefab);
-                    string modName = GetModDisplayName(prefab);
-                    string modId = GetModId(prefab);
-                    Mod.Log.InfoFormat(
-                        "Surface catalog: asset='{0}', group='{1}', menuPath='{2}', modName='{3}', modId='{4}'",
-                        name,
-                        group,
-                        menuPath,
-                        modName ?? "",
-                        modId ?? "");
-
                     catalog.Add(new Dictionary<string, string>
                     {
                         ["id"] = id,
@@ -562,5 +564,6 @@ namespace AutomaticTextureReplacer
             m_SurfacePickerWidth.Update(width);
             m_SurfacePickerHeight.Update(height);
         }
+
     }
 }
