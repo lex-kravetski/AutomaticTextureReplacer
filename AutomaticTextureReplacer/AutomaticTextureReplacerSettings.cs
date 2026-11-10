@@ -50,6 +50,12 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public bool SurfacePickerOpen { get; set; }
 
+        [SettingsUIHidden]
+        public string SurfacePickerContextJson { get; set; } = "";
+
+        [SettingsUIHidden]
+        public string RulesJson { get; set; } = "[]";
+
         public override void SetDefaults()
         {
             DialogOpen = true;
@@ -62,6 +68,8 @@ namespace AutomaticTextureReplacer
             SurfacePickerWidth = 920;
             SurfacePickerHeight = 680;
             SurfacePickerOpen = false;
+            SurfacePickerContextJson = "";
+            RulesJson = "[]";
             DialogFontSize = 100;
         }
     }

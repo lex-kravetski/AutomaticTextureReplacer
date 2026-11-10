@@ -27,7 +27,9 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_SurfacePickerWidth;
         private ValueBinding<int> m_SurfacePickerHeight;
         private ValueBinding<bool> m_SurfacePickerOpen;
+        private ValueBinding<string> m_SurfacePickerContext;
         private ValueBinding<string> m_SurfaceCatalog;
+        private ValueBinding<string> m_RulesJson;
         private EntityQuery m_SurfaceQuery;
         private int m_LastDialogFontSize = -1;
         private bool m_SurfaceCatalogLoaded;
@@ -48,7 +50,9 @@ namespace AutomaticTextureReplacer
             AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("automatictexturereplacer", "surfacePickerWidth", settings?.SurfacePickerWidth ?? 920));
             AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("automatictexturereplacer", "surfacePickerHeight", settings?.SurfacePickerHeight ?? 680));
             AddBinding(m_SurfacePickerOpen = new ValueBinding<bool>("automatictexturereplacer", "surfacePickerOpen", settings?.SurfacePickerOpen ?? false));
+            AddBinding(m_SurfacePickerContext = new ValueBinding<string>("automatictexturereplacer", "surfacePickerContext", settings?.SurfacePickerContextJson ?? ""));
             AddBinding(m_SurfaceCatalog = new ValueBinding<string>("automatictexturereplacer", "surfaceCatalog", "[]"));
+            AddBinding(m_RulesJson = new ValueBinding<string>("automatictexturereplacer", "rulesJson", settings?.RulesJson ?? "[]"));
 
             m_SurfaceQuery = GetEntityQuery(
                 new EntityQueryDesc
@@ -73,8 +77,9 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeDialog", () => SetDialogOpen(false)));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setDialogPosition", SetDialogPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setDialogSize", SetDialogSize));
-            AddBinding(new TriggerBinding("automatictexturereplacer", "openSurfacePicker", OpenSurfacePicker));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "openSurfacePicker", OpenSurfacePicker));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
         }
@@ -83,7 +88,9 @@ namespace AutomaticTextureReplacer
         {
             base.OnUpdate();
 
-            if (!m_SurfaceCatalogLoaded && Mod.Settings?.SurfacePickerOpen == true)
+            // Build the picker catalog as soon as prefab data is available, rather than
+            // making the player wait for the first Edit click.
+            if (!m_SurfaceCatalogLoaded && !m_SurfaceQuery.IsEmptyIgnoreFilter)
             {
                 RefreshSurfaceCatalog();
             }
@@ -135,7 +142,9 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            width = System.Math.Max(320, System.Math.Min(width, 1600));
+            int fontSize = System.Math.Max(100, System.Math.Min(Mod.Settings.DialogFontSize, 200));
+            int minimumWidth = (int)System.Math.Ceiling(760d * fontSize / 100d);
+            width = System.Math.Max(minimumWidth, System.Math.Min(width, 1600));
             height = System.Math.Max(200, System.Math.Min(height, 1200));
             Mod.Settings.DialogWidth = width;
             Mod.Settings.DialogHeight = height;
@@ -144,15 +153,33 @@ namespace AutomaticTextureReplacer
             m_DialogHeight.Update(height);
         }
 
-        private void OpenSurfacePicker()
+        private void OpenSurfacePicker(string contextJson)
         {
-            RefreshSurfaceCatalog();
+            if (!m_SurfaceCatalogLoaded)
+            {
+                RefreshSurfaceCatalog();
+            }
             if (Mod.Settings != null)
             {
+                Mod.Settings.SurfacePickerContextJson = contextJson ?? "";
                 Mod.Settings.SurfacePickerOpen = true;
                 Mod.Settings.ApplyAndSave();
             }
+            m_SurfacePickerContext.Update(contextJson ?? "");
             m_SurfacePickerOpen.Update(true);
+        }
+
+        private void SetRulesJson(string value)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            string json = string.IsNullOrWhiteSpace(value) ? "[]" : value;
+            Mod.Settings.RulesJson = json;
+            Mod.Settings.ApplyAndSave();
+            m_RulesJson.Update(json);
         }
 
         private void CloseSurfacePicker()
@@ -230,7 +257,8 @@ namespace AutomaticTextureReplacer
         private static bool IsExcludedSurfaceName(string name)
         {
             return name.EndsWith("Placeholder", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "Surface Area", StringComparison.OrdinalIgnoreCase);
+                   string.Equals(name, "Surface Area", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "Missing Area", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetSurfaceGroup(SurfacePrefab prefab)

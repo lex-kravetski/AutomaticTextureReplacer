@@ -24,28 +24,75 @@ const register = (moduleRegistry) => {
   const surfacePickerY$ = bindValue("automatictexturereplacer", "surfacePickerY", -1);
   const surfacePickerWidth$ = bindValue("automatictexturereplacer", "surfacePickerWidth", 920);
   const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", 680);
+  const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
-  const RuleRow = React.memo(({ rule, deleteRule, setRuleEnabled, scaledFontSize }) => {
+  const rulesJson$ = bindValue("automatictexturereplacer", "rulesJson", "[]");
+  const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
+    className: "atrSurfaceTooltip",
+    style: { fontSize: scaledFontSize },
+  },
+  h("strong", null, surface.name),
+  includeGroup ? h("span", null, surface.group || "In-game") : null,
+  h("span", null, surface.menuPath || "In-game asset"),
+  h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
+
+  const RuleRow = React.memo(({ rule, deleteRule, setRuleEnabled, openSurfacePicker, catalogById, scaledFontSize, rowIndex }) => {
+    const lastPickerOpenAt = React.useRef(0);
     const gameButton = (label, onSelect, variant = "flat", title, className) => ui.Button
       ? h(ui.Button, { variant, focusKey: FocusDisabled, title, tooltipLabel: title, onSelect, className, style: { fontSize: scaledFontSize } }, label)
       : h("button", { title, onClick: onSelect, className, style: { fontSize: scaledFontSize } }, label);
+    const openPickerOnce = (side) => {
+      const now = Date.now();
+      if (now - lastPickerOpenAt.current < 250) return;
+      lastPickerOpenAt.current = now;
+      openSurfacePicker(rule, side);
+    };
     const checkbox = GameCheckbox
-      ? h(GameCheckbox, { checked: rule.enabled, focusKey: FocusDisabled, onChange: (enabled) => setRuleEnabled(rule.id, enabled) })
+      ? h(GameCheckbox, { checked: rule.enabled, focusKey: FocusDisabled, className: "atrRuleCheckbox", style: { width: "38rem", height: "38rem" }, onChange: (enabled) => setRuleEnabled(rule.id, enabled) })
       : h("span", null, rule.enabled ? "✓" : "");
-    const surfaces = (title, side) => h("div", { className: "atrSurfaceGroup" },
-      gameButton("Edit", () => trigger("automatictexturereplacer", "openSurfacePicker"), "flat", title, "atrEditButton"),
-      h("span", { className: "atrSurfacePlaceholder", style: { fontSize: scaledFontSize } }, "…some icons…"));
+    const surfaces = (title, side) => {
+      const ids = rule[side === "source" ? "sourceSurfaceIds" : "targetSurfaceIds"] || [];
+      const icons = ids.map((id) => catalogById.get(id)).filter(Boolean).map((surface) => {
+        const icon = h("img", {
+          className: "atrRuleSurfaceIcon",
+          src: surface.thumbnail,
+          alt: surface.name,
+        });
+        const framedIcon = h("div", { className: "atrRuleSurfaceIconFrame" }, icon);
+        return ui.Tooltip
+          ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize), delayTime: 0, hideOnInteraction: false }, framedIcon)
+          : h("span", { key: surface.id, title: `${surface.name} — ${surface.group || "In-game"}` }, framedIcon);
+      });
+      const editButton = ui.Button
+          ? h(ui.Button, {
+            variant: "flat",
+            focusKey: FocusDisabled,
+            title,
+            tooltipLabel: title,
+            className: "atrEditButton",
+            style: { fontSize: scaledFontSize },
+            onSelect: () => openPickerOnce(side),
+          }, "Edit")
+          : gameButton("Edit", () => openPickerOnce(side), "flat", title, "atrEditButton");
+      return h("div", {
+        className: "atrSurfaceGroup atrRuleSurfaceCell",
+        onMouseDownCapture: (event) => {
+          if (event.button === 0 && event.target.closest(".atrEditButton")) openPickerOnce(side);
+        },
+      },
+      h("div", { className: "atrRuleEditCell" }, editButton),
+      h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, icons)));
+    };
     const actions = h("div", { className: "atrRuleActions" },
-      gameButton("Replace", () => {}, "primary"),
-      gameButton("×", () => deleteRule(rule.id), "flat", "Delete rule"));
+      gameButton("Replace", () => {}, "primary", null, "atrReplaceButton"),
+      gameButton("×", () => deleteRule(rule.id), "flat", "Delete rule", "atrDeleteRuleButton"));
 
-    return h(ui.PanelSectionRow, {
-      disableFocus: true,
-      className: "atrRuleRow",
-      left: h("div", { className: "atrSurfaceGroup" }, checkbox, surfaces("Edit source surfaces", "source")),
-      center: surfaces("Edit replacement surfaces", "target"),
-      right: actions,
-    });
+    return h("div", {
+      className: "atrRuleRow" + (rowIndex % 2 ? " atrRuleRowAlternate" : ""),
+    },
+    h("div", { className: "atrRuleLeftCell" }, checkbox, surfaces("Edit source surfaces", "source")),
+    surfaces("Edit replacement surfaces", "target"),
+    actions);
   });
   const dialogOpen$ = bindValue("automatictexturereplacer", "dialogOpen", true);
   const dialogX$ = bindValue("automatictexturereplacer", "dialogX", -1);
@@ -67,6 +114,23 @@ const register = (moduleRegistry) => {
       : h("button", { className: "atrToolbarFallback", onClick: toggle, title: "Automatic Texture Replacer" }, "ATR");
   };
 
+  const SurfaceThumbnailPreloader = () => {
+    const catalogJson = useValue(surfaceCatalog$);
+    const thumbnails = React.useMemo(() => {
+      try {
+        return JSON.parse(catalogJson || "[]")
+          .map((surface) => surface.thumbnail)
+          .filter((src) => src && !src.startsWith("thumbnail://"));
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid surface catalog while warming thumbnails", error);
+        return [];
+      }
+    }, [catalogJson]);
+
+    return h("div", { className: "atrSurfaceThumbnailPreloader", "aria-hidden": true },
+      thumbnails.map((src, index) => h("img", { key: `${index}-${src}`, src, loading: "eager", alt: "" })));
+  };
+
   const SurfacePicker = () => {
     const open = useValue(surfacePickerOpen$);
     const savedX = useValue(surfacePickerX$);
@@ -75,8 +139,12 @@ const register = (moduleRegistry) => {
     const savedHeight = useValue(surfacePickerHeight$);
     const fontSize = useValue(dialogFontSize$);
     const catalogJson = useValue(surfaceCatalog$);
-    const [selectedId, setSelectedId] = React.useState(null);
+    const contextJson = useValue(surfacePickerContext$);
+    const rulesJson = useValue(rulesJson$);
+    const [selectedIds, setSelectedIds] = React.useState(() => new Set());
     const [collapsedGroups, setCollapsedGroups] = React.useState({});
+    const lastSelection = React.useRef(null);
+    const pendingShiftClick = React.useRef(false);
     const [dragPosition, setDragPosition] = React.useState(null);
     const [size, setSize] = React.useState(null);
     const dialogRef = React.useRef(null);
@@ -88,6 +156,14 @@ const register = (moduleRegistry) => {
         return [];
       }
     }, [catalogJson]);
+    const pickerContext = React.useMemo(() => {
+      try {
+        return JSON.parse(contextJson || "{}");
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid surface picker context", error);
+        return {};
+      }
+    }, [contextJson]);
     const groups = React.useMemo(() => {
       const grouped = new Map();
       catalog.forEach((surface) => {
@@ -103,10 +179,11 @@ const register = (moduleRegistry) => {
         });
     }, [catalog]);
     React.useEffect(() => {
-      if (open) setSelectedId(null);
-    }, [open]);
-
-    if (!open) return null;
+      if (open) {
+        setSelectedIds(new Set(pickerContext.selectedIds || []));
+        lastSelection.current = null;
+      }
+    }, [open, pickerContext]);
 
     const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - savedWidth) / 2)) : savedX;
     const initialY = savedY < 0 ? Math.max(0, Math.round((window.innerHeight - savedHeight) / 2)) : savedY;
@@ -163,27 +240,100 @@ const register = (moduleRegistry) => {
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
-    const button = (label, onSelect, variant) => ui.Button
-      ? h(ui.Button, { variant, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize } }, label)
-      : h("button", { onClick: onSelect, style: { fontSize: scaledFontSize } }, label);
+    const button = (label, onSelect, variant, className, extraStyle = {}) => ui.Button
+      ? h(ui.Button, { variant, className, focusKey: FocusDisabled, onSelect, style: { fontSize: scaledFontSize, ...extraStyle } }, label)
+      : h("button", { className, onClick: onSelect, style: { fontSize: scaledFontSize, ...extraStyle } }, label);
     const closePicker = () => trigger("automatictexturereplacer", "closeSurfacePicker");
-    const renderTile = (surface) => {
-      const tooltip = h("div", { className: "atrSurfaceTooltip", style: { fontSize: scaledFontSize } },
-        h("strong", null, surface.name),
-        h("span", null, surface.menuPath || "In-game asset"),
-        h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
+    const applySelection = () => {
+      const selectedIdsArray = Array.from(selectedIds);
+      const sideProperty = pickerContext.side === "target" ? "targetSurfaceIds" : "sourceSurfaceIds";
+      try {
+        const rules = JSON.parse(rulesJson || "[]");
+        const updatedRules = rules.map((rule) => String(rule.id) === String(pickerContext.rowId)
+          ? { ...rule, [sideProperty]: selectedIdsArray }
+          : rule);
+        trigger("automatictexturereplacer", "saveRules", JSON.stringify(updatedRules));
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Failed to apply surface selection", error);
+      }
+      closePicker();
+    };
+    const selectSurface = (group, index, surface, shiftKey) => {
+      const anchor = lastSelection.current;
+      if (shiftKey && anchor?.groupName === group.name) {
+        const start = Math.min(anchor.index, index);
+        const end = Math.max(anchor.index, index);
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (let i = start; i <= end; i++) {
+            if (anchor.select) next.add(group.surfaces[i].id);
+            else next.delete(group.surfaces[i].id);
+          }
+          return next;
+        });
+        return;
+      }
+
+      const shouldSelect = !selectedIds.has(surface.id);
+      lastSelection.current = { groupName: group.name, index, select: shouldSelect };
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        if (shouldSelect) next.add(surface.id);
+        else next.delete(surface.id);
+        return next;
+      });
+    };
+    const selectGroup = (group, shouldSelect) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        group.surfaces.forEach((surface) => shouldSelect ? next.add(surface.id) : next.delete(surface.id));
+        return next;
+      });
+      if (group.surfaces.length) {
+        lastSelection.current = { groupName: group.name, index: group.surfaces.length - 1, select: shouldSelect };
+      } else if (lastSelection.current?.groupName === group.name) {
+        lastSelection.current = null;
+      }
+    };
+    const setAllGroupsCollapsed = (collapsed) => {
+      const next = {};
+      groups.forEach((group) => { next[group.name] = collapsed; });
+      setCollapsedGroups(next);
+    };
+    const renderTile = (group, surface, index) => {
+      const selected = selectedIds.has(surface.id);
+      const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize);
+      const modBadgeImage = h("img", {
+        className: "atrParadoxModsBadge",
+        src: "coui://game/UI/Media/Glyphs/ParadoxMods.svg",
+        alt: "Paradox Mods",
+        title: surface.group,
+      });
+      const modBadge = surface.isMod === "True"
+        ? ui.Tooltip
+          ? h(ui.Tooltip, { tooltip: surface.group, delayTime: 0, hideOnInteraction: false }, modBadgeImage)
+          : modBadgeImage
+        : null;
       const tileContents = h(React.Fragment, null,
         h("img", { src: surface.thumbnail, alt: surface.name }),
-        surface.isMod === "True" ? h("img", { className: "atrParadoxModsBadge", src: "coui://game/UI/Media/Glyphs/ParadoxMods.svg", alt: "Paradox Mods" }) : null);
+        modBadge);
+      const handleSelect = () => selectSurface(group, index, surface, pendingShiftClick.current);
+      const tileClassName = "atrSurfaceTile" + (selected ? " atrSurfaceTileSelected" : "");
       const tile = ui.Button
         ? h(ui.Button, {
-          variant: selectedId === surface.id ? "primary" : "flat",
-          className: "atrSurfaceTile",
+          variant: "flat",
+          className: tileClassName,
           focusKey: FocusDisabled,
-          onSelect: () => setSelectedId(surface.id),
+          onMouseDown: (event) => { pendingShiftClick.current = event.shiftKey; },
+          onSelect: handleSelect,
           "aria-label": surface.name,
         }, tileContents)
-        : h("button", { className: "atrSurfaceTile", onClick: () => setSelectedId(surface.id), title: surface.name },
+        : h("button", {
+          className: tileClassName,
+          onMouseDown: (event) => { pendingShiftClick.current = event.shiftKey; },
+          onClick: handleSelect,
+          title: surface.name,
+        },
           tileContents);
       return ui.Tooltip
         ? h(ui.Tooltip, { key: surface.id, tooltip, delayTime: 0, hideOnInteraction: false }, tile)
@@ -192,10 +342,10 @@ const register = (moduleRegistry) => {
     const sections = groups.map((group) => {
       const collapsed = !!collapsedGroups[group.name];
       const toggle = () => setCollapsedGroups((current) => ({ ...current, [group.name]: !current[group.name] }));
-      const header = ui.Button
+      const groupToggle = ui.Button
         ? h(ui.Button, {
           variant: "flat",
-          className: "atrPickerGroupHeader",
+          className: "atrPickerGroupToggle",
           focusKey: FocusDisabled,
           onSelect: toggle,
           "aria-expanded": !collapsed,
@@ -203,13 +353,17 @@ const register = (moduleRegistry) => {
         h("span", { className: "atrPickerGroupArrow", "aria-hidden": true }, collapsed ? "▲" : "▼"),
         h("strong", null, group.name),
         h("span", { className: "atrPickerGroupCount" }, String(group.surfaces.length)))
-        : h("button", { className: "atrPickerGroupHeader", onClick: toggle, "aria-expanded": !collapsed },
+        : h("button", { className: "atrPickerGroupToggle", onClick: toggle, "aria-expanded": !collapsed },
           h("span", { className: "atrPickerGroupArrow", "aria-hidden": true }, collapsed ? "▲" : "▼"),
           h("strong", null, group.name),
           h("span", { className: "atrPickerGroupCount" }, String(group.surfaces.length)));
+      const groupButtons = h("div", { className: "atrPickerGroupActions" },
+        button("Select all", () => selectGroup(group, true), "flat"),
+        button("Deselect all", () => selectGroup(group, false), "flat"));
+      const header = h("div", { className: "atrPickerGroupHeader" }, groupToggle, groupButtons);
       return h("section", { key: group.name, className: "atrPickerGroupSection" },
         header,
-        collapsed ? null : h("div", { className: "atrSurfaceGrid" }, group.surfaces.map(renderTile)));
+        collapsed ? null : h("div", { className: "atrSurfaceGrid" }, group.surfaces.map((surface, index) => renderTile(group, surface, index))));
     });
 
     const style = {
@@ -218,19 +372,35 @@ const register = (moduleRegistry) => {
       width: dimensions.width + "px",
       height: dimensions.height + "px",
     };
+    const spacingScale = fontSize / 100;
+    const globalButtonStyle = {
+      padding: `${6 * spacingScale}rem ${14 * spacingScale}rem`,
+      margin: `${3 * spacingScale}rem`,
+    };
+    const groupControls = h("div", {
+      className: "atrPickerGlobalActions",
+      style: { gap: `${8 * spacingScale}rem` },
+    },
+    button("Expand all", () => setAllGroupsCollapsed(false), "flat", "atrPickerGlobalButton", globalButtonStyle),
+    button("Collapse all", () => setAllGroupsCollapsed(true), "flat", "atrPickerGlobalButton", globalButtonStyle),
+    button("Deselect all", () => {
+      setSelectedIds(new Set());
+      lastSelection.current = null;
+    }, "flat", "atrPickerGlobalButton", globalButtonStyle));
     const body = h("div", { className: "atrPickerBody", style: { fontSize: scaledFontSize } },
+      groupControls,
       catalog.length === 0
         ? h("div", { className: "atrPickerEmpty" }, "No surfaces found.")
         : h(ui.Scrollable || "div", { className: "atrPickerScroll", vertical: true, useNewStyle: true },
           h("div", { className: "atrPickerGroups" }, sections)));
     const footer = h("div", { className: "atrPickerFooter" },
-      button("Apply", closePicker, "primary"),
+      button("Apply", applySelection, "primary"),
       button("Cancel", closePicker, "flat"));
     const resizeCorners = h(React.Fragment, null,
       h("div", { className: "atrPickerResizeCorner atrResizeLeft", onMouseDown: (event) => beginResize(event, true), title: "Drag this corner to resize" }),
       h("div", { className: "atrPickerResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
 
-    return h("div", { className: "atrDialogPositioner atrPickerPositioner", style, ref: dialogRef },
+    return h("div", { className: "atrDialogPositioner atrPickerPositioner", style: { ...style, display: open ? "block" : "none" }, ref: dialogRef, "aria-hidden": !open },
       h(ui.Panel, {
         className: "atrPickerPanel",
         contentClassName: "atrPickerPanelContent",
@@ -247,25 +417,72 @@ const register = (moduleRegistry) => {
     const savedWidth = useValue(dialogWidth$);
     const savedHeight = useValue(dialogHeight$);
     const fontSize = useValue(dialogFontSize$);
+    const rulesJson = useValue(rulesJson$);
+    const catalogJson = useValue(surfaceCatalog$);
     const dialogRef = React.useRef(null);
     const rulesScrollRef = React.useRef(null);
     const nextRuleId = React.useRef(1);
+    const rulesRef = React.useRef([]);
     const [dragPosition, setDragPosition] = React.useState(null);
     const [size, setSize] = React.useState(null);
     const [rules, setRules] = React.useState([]);
-    const deleteRule = React.useCallback((id) => {
-      setRules((current) => current.filter((item) => item.id !== id));
+    const catalog = React.useMemo(() => {
+      try {
+        return JSON.parse(catalogJson || "[]");
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid surface catalog", error);
+        return [];
+      }
+    }, [catalogJson]);
+    const catalogById = React.useMemo(() => new Map(catalog.map((surface) => [surface.id, surface])), [catalog]);
+    React.useEffect(() => {
+      try {
+        const loaded = JSON.parse(rulesJson || "[]");
+        const normalized = Array.isArray(loaded) ? loaded.map((rule, index) => ({
+          id: rule.id ?? index + 1,
+          enabled: rule.enabled !== false,
+          sourceSurfaceIds: Array.isArray(rule.sourceSurfaceIds) ? rule.sourceSurfaceIds : [],
+          targetSurfaceIds: Array.isArray(rule.targetSurfaceIds) ? rule.targetSurfaceIds : [],
+        })) : [];
+        rulesRef.current = normalized;
+        setRules(normalized);
+        const highestNumericId = normalized.reduce((highest, rule) =>
+          Number.isFinite(Number(rule.id)) ? Math.max(highest, Number(rule.id)) : highest, 0);
+        nextRuleId.current = Math.max(nextRuleId.current, highestNumericId + 1);
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid saved rules", error);
+        rulesRef.current = [];
+        setRules([]);
+      }
+    }, [rulesJson]);
+    const persistRules = React.useCallback((nextRules) => {
+      rulesRef.current = nextRules;
+      setRules(nextRules);
+      trigger("automatictexturereplacer", "saveRules", JSON.stringify(nextRules));
     }, []);
+    const deleteRule = React.useCallback((id) => {
+      persistRules(rulesRef.current.filter((item) => String(item.id) !== String(id)));
+    }, [persistRules]);
     const setRuleEnabled = React.useCallback((id, enabled) => {
-      setRules((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
+      persistRules(rulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
+    }, [persistRules]);
+    const openSurfacePicker = React.useCallback((rule, side) => {
+      const selectedIds = side === "target" ? rule.targetSurfaceIds : rule.sourceSurfaceIds;
+      trigger("automatictexturereplacer", "openSurfacePicker", JSON.stringify({
+        rowId: rule.id,
+        side,
+        selectedIds: selectedIds || [],
+      }));
     }, []);
 
     if (!open) return null;
 
-    const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - savedWidth) / 2)) : savedX;
+    const minimumDialogWidth = Math.round(760 * fontSize / 100);
+    const initialWidth = Math.max(minimumDialogWidth, savedWidth);
+    const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - initialWidth) / 2)) : savedX;
     const initialY = savedY < 0 ? Math.max(0, Math.round((window.innerHeight - savedHeight) / 2)) : savedY;
     const position = dragPosition || { x: initialX, y: initialY };
-    const dimensions = size || { width: savedWidth, height: savedHeight };
+    const dimensions = { width: Math.max(minimumDialogWidth, size?.width ?? savedWidth), height: size?.height ?? savedHeight };
 
     const beginDrag = (event) => {
       if (event.button !== 0 || event.target.closest("button")) return;
@@ -295,14 +512,14 @@ const register = (moduleRegistry) => {
       const startLeft = position.x;
       const horizontalDelta = (e) => (e.clientX - startX) * (fromLeft ? -1 : 1);
       const move = (e) => {
-        const width = Math.max(320, startWidth + horizontalDelta(e));
+        const width = Math.max(minimumDialogWidth, startWidth + horizontalDelta(e));
         setSize({ width, height: Math.max(200, startHeight + e.clientY - startY) });
         if (fromLeft) setDragPosition((current) => ({ ...(current || position), x: startLeft + startWidth - width }));
       };
       const end = (e) => {
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", end);
-        const width = Math.max(320, Math.min(1600, Math.round(startWidth + horizontalDelta(e))));
+        const width = Math.max(minimumDialogWidth, Math.min(1600, Math.round(startWidth + horizontalDelta(e))));
         const height = Math.max(200, Math.min(1200, Math.round(startHeight + e.clientY - startY)));
         setSize({ width, height });
         if (fromLeft) {
@@ -317,19 +534,27 @@ const register = (moduleRegistry) => {
     };
 
     const addRule = () => {
-      const newRule = { id: nextRuleId.current++, enabled: true };
-      setRules((current) => [...current, newRule]);
+      const newRule = {
+        id: nextRuleId.current++,
+        enabled: true,
+        sourceSurfaceIds: [],
+        targetSurfaceIds: [],
+      };
+      persistRules([...rulesRef.current, newRule]);
       window.requestAnimationFrame(() => {
         const scrollArea = rulesScrollRef.current;
         if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
       });
     };
 
-    const rows = rules.map((rule) => h(RuleRow, {
+    const rows = rules.map((rule, index) => h(RuleRow, {
       key: rule.id,
       rule,
+      rowIndex: index,
       deleteRule,
       setRuleEnabled,
+      openSurfacePicker,
+      catalogById,
       scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
     }));
 
@@ -338,6 +563,7 @@ const register = (moduleRegistry) => {
       top: Math.max(0, Math.min(position.y, window.innerHeight - 50)) + "px",
       width: dimensions.width + "px",
       height: dimensions.height + "px",
+      minWidth: minimumDialogWidth + "px",
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
@@ -360,7 +586,7 @@ const register = (moduleRegistry) => {
         className: "atrRulesScroll",
         ref: rulesScrollRef,
         vertical: true,
-        horizontal: true,
+        horizontal: false,
         useNewStyle: true,
       }, rows)));
     const resizeCorners = h(React.Fragment, null,
@@ -387,6 +613,7 @@ const register = (moduleRegistry) => {
   moduleRegistry.append("GameTopLeft", ToolbarButton);
   moduleRegistry.append("Game", Dialog);
   moduleRegistry.append("Game", SurfacePicker);
+  moduleRegistry.append("Game", SurfaceThumbnailPreloader);
 };
 
 const hasCSS = true;
