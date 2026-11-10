@@ -34,6 +34,9 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public bool DialogOpen { get; set; } = true;
 
+        [SettingsUIHidden]
+        public string ReplacementScope { get; set; } = "assets";
+
         // -1 means that the dialog has not been positioned by the player yet.
         [SettingsUIHidden]
         public int DialogX { get; set; } = -1;
@@ -66,6 +69,9 @@ namespace AutomaticTextureReplacer
         public string SurfacePickerContextJson { get; set; } = "";
 
         [SettingsUIHidden]
+        public string SurfacePickerCollapsedGroupsJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
         public string RulesJson { get; set; } = "[]";
 
         public override void SetDefaults()
@@ -81,12 +87,14 @@ namespace AutomaticTextureReplacer
             SurfacePickerHeight = 680;
             SurfacePickerOpen = false;
             SurfacePickerContextJson = "";
+            SurfacePickerCollapsedGroupsJson = "{}";
             RulesJson = "[]";
             DialogFontSize = 100;
             ShowInGameSurfacesAsTargets = false;
             ShowSpecialIndustrySurfacesAsTargets = false;
             ShowModSurfacesAsSources = false;
             ShowRevertAllButton = false;
+            ReplacementScope = "assets";
         }
     }
 

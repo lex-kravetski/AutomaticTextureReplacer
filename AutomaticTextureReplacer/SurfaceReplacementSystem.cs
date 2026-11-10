@@ -603,10 +603,11 @@ namespace AutomaticTextureReplacer
             }
 
             Mod.Log.InfoFormat(
-                "Surface replacement started: mode={0}, ruleId={1}, ruleCount={2}, mapSurfaceAreaCount={3}, catalogSurfaceCount={4}",
+                "Surface replacement started: mode={0}, ruleId={1}, ruleCount={2}, scope={3}, mapSurfaceAreaCount={4}, catalogSurfaceCount={5}",
                 replaceSingleRule ? "single rule" : "Replace All",
                 replaceSingleRule ? selectedRuleId.ToString() : "all enabled",
                 rules.Count,
+                Mod.Settings?.ReplacementScope ?? "assets",
                 m_SurfaceAreaQuery.CalculateEntityCount(),
                 surfaceEntitiesById.Count);
 
@@ -700,7 +701,11 @@ namespace AutomaticTextureReplacer
             bool hasUpdateCommandBuffer = false;
             int scanned = 0;
             int unmatched = 0;
+            int skippedOutOfScopeAreas = 0;
             int queued = 0;
+            string replacementScope = Mod.Settings?.ReplacementScope ?? "assets";
+            bool includeAssets = replacementScope == "assets" || replacementScope == "all";
+            bool includeManualAreas = replacementScope == "hand-drawn-surfaces" || replacementScope == "all";
             HashSet<string> scannedAssets = new HashSet<string>(StringComparer.Ordinal);
             Dictionary<string, List<string>> surfacesByAsset = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             using (NativeArray<Entity> areaEntities = m_SurfaceAreaQuery.ToEntityArray(Allocator.Temp))
@@ -710,6 +715,13 @@ namespace AutomaticTextureReplacer
                     scanned++;
                     PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(areaEntity);
                     Entity buildingEntity = GetOwningBuildingEntity(areaEntity);
+                    bool isAssetSurface = buildingEntity != Entity.Null;
+                    if ((isAssetSurface && !includeAssets) || (!isAssetSurface && !includeManualAreas))
+                    {
+                        skippedOutOfScopeAreas++;
+                        continue;
+                    }
+
                     string assetName = GetAssetName(buildingEntity);
                     scannedAssets.Add(assetName);
                     string surfaceName = surfaceIdsByEntity.TryGetValue(prefabRef.m_Prefab, out string detectedSurfaceId)
@@ -785,9 +797,10 @@ namespace AutomaticTextureReplacer
             }
 
             Mod.Log.InfoFormat(
-                "Surface replacement scan finished: scannedSurfaceAreas={0}, assetsWithSurfaceAreas={1}, unmatchedSurfaceAreas={2}, replacementsQueued={3}, sourceMappings={4}",
+                "Surface replacement scan finished: scannedSurfaceAreas={0}, assetsWithSurfaceAreas={1}, skippedOutOfScopeAreas={2}, unmatchedSurfaceAreas={3}, replacementsQueued={4}, sourceMappings={5}",
                 scanned,
                 scannedAssets.Count,
+                skippedOutOfScopeAreas,
                 unmatched,
                 queued,
                 replacementsBySource.Count);

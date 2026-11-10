@@ -25,6 +25,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_DialogWidth;
         private ValueBinding<int> m_DialogHeight;
         private ValueBinding<int> m_DialogFontSize;
+        private ValueBinding<string> m_ReplacementScope;
         private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
         private ValueBinding<bool> m_ShowModSurfacesAsSources;
@@ -35,6 +36,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_SurfacePickerHeight;
         private ValueBinding<bool> m_SurfacePickerOpen;
         private ValueBinding<string> m_SurfacePickerContext;
+        private ValueBinding<string> m_SurfacePickerCollapsedGroups;
         private ValueBinding<string> m_SurfaceCatalog;
         private ValueBinding<string> m_RulesJson;
         private EntityQuery m_SurfaceQuery;
@@ -59,6 +61,10 @@ namespace AutomaticTextureReplacer
             AddBinding(m_DialogWidth = new ValueBinding<int>("automatictexturereplacer", "dialogWidth", settings?.DialogWidth ?? 440));
             AddBinding(m_DialogHeight = new ValueBinding<int>("automatictexturereplacer", "dialogHeight", settings?.DialogHeight ?? 300));
             AddBinding(m_DialogFontSize = new ValueBinding<int>("automatictexturereplacer", "dialogFontSize", settings?.DialogFontSize ?? 100));
+            AddBinding(m_ReplacementScope = new ValueBinding<string>(
+                "automatictexturereplacer",
+                "replacementScope",
+                settings?.ReplacementScope ?? "assets"));
             AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
                 "automatictexturereplacer",
                 "showInGameSurfacesAsTargets",
@@ -81,6 +87,10 @@ namespace AutomaticTextureReplacer
             AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("automatictexturereplacer", "surfacePickerHeight", settings?.SurfacePickerHeight ?? 680));
             AddBinding(m_SurfacePickerOpen = new ValueBinding<bool>("automatictexturereplacer", "surfacePickerOpen", settings?.SurfacePickerOpen ?? false));
             AddBinding(m_SurfacePickerContext = new ValueBinding<string>("automatictexturereplacer", "surfacePickerContext", settings?.SurfacePickerContextJson ?? ""));
+            AddBinding(m_SurfacePickerCollapsedGroups = new ValueBinding<string>(
+                "automatictexturereplacer",
+                "surfacePickerCollapsedGroups",
+                settings?.SurfacePickerCollapsedGroupsJson ?? "{}"));
             AddBinding(m_SurfaceCatalog = new ValueBinding<string>("automatictexturereplacer", "surfaceCatalog", "[]"));
             AddBinding(m_RulesJson = new ValueBinding<string>("automatictexturereplacer", "rulesJson", settings?.RulesJson ?? "[]"));
 
@@ -110,9 +120,11 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setReplacementScope", SetReplacementScope));
             AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllSurfaces", RevertAllSurfaces));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", SetSurfacePickerCollapsedGroups));
         }
 
         protected override void OnUpdate()
@@ -270,6 +282,19 @@ namespace AutomaticTextureReplacer
             }
 
             SurfaceReplacementSystem.QueueReplacement(requestedRuleId, Mod.Settings.RulesJson);
+        }
+
+        private void SetReplacementScope(string value)
+        {
+            if (Mod.Settings == null ||
+                (value != "assets" && value != "hand-drawn-surfaces" && value != "all"))
+            {
+                return;
+            }
+
+            Mod.Settings.ReplacementScope = value;
+            Mod.Settings.ApplyAndSave();
+            m_ReplacementScope.Update(value);
         }
 
         private void RevertAllSurfaces()
@@ -661,6 +686,19 @@ namespace AutomaticTextureReplacer
             Mod.Settings.ApplyAndSave();
             m_SurfacePickerWidth.Update(width);
             m_SurfacePickerHeight.Update(height);
+        }
+
+        private void SetSurfacePickerCollapsedGroups(string value)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            string json = string.IsNullOrWhiteSpace(value) ? "{}" : value;
+            Mod.Settings.SurfacePickerCollapsedGroupsJson = json;
+            Mod.Settings.ApplyAndSave();
+            m_SurfacePickerCollapsedGroups.Update(json);
         }
 
     }

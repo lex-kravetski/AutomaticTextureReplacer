@@ -19,6 +19,7 @@ const register = (moduleRegistry) => {
   const BUTTON_STYLE = Object.freeze({
     standard: "standard",
     pickerGlobal: "pickerGlobal",
+    scope: "scope",
   });
   const BUTTON_STYLE_DEFINITIONS = Object.freeze({
     [BUTTON_STYLE.standard]: ({ fontSize }) => ({
@@ -28,6 +29,10 @@ const register = (moduleRegistry) => {
     [BUTTON_STYLE.pickerGlobal]: ({ fontSize, scale }) => ({
       outer: { margin: `${3 * scale}rem` },
       button: { fontSize, padding: `${6 * scale}rem ${14 * scale}rem` },
+    }),
+    [BUTTON_STYLE.scope]: ({ fontSize }) => ({
+      outer: { margin: "2rem" },
+      button: { fontSize, padding: "4rem 12rem" },
     }),
   });
   const createButton = (label, onSelect, options = {}) => {
@@ -80,12 +85,14 @@ const register = (moduleRegistry) => {
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("automatictexturereplacer", "surfaceCatalog", "[]");
   const surfacePickerOpen$ = bindValue("automatictexturereplacer", "surfacePickerOpen", false);
+  const surfacePickerCollapsedGroups$ = bindValue("automatictexturereplacer", "surfacePickerCollapsedGroups", "{}");
   const surfacePickerX$ = bindValue("automatictexturereplacer", "surfacePickerX", -1);
   const surfacePickerY$ = bindValue("automatictexturereplacer", "surfacePickerY", -1);
   const surfacePickerWidth$ = bindValue("automatictexturereplacer", "surfacePickerWidth", 920);
   const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", 680);
   const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
+  const replacementScope$ = bindValue("automatictexturereplacer", "replacementScope", "assets");
   const showInGameSurfacesAsTargets$ = bindValue("automatictexturereplacer", "showInGameSurfacesAsTargets", false);
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("automatictexturereplacer", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("automatictexturereplacer", "showModSurfacesAsSources", false);
@@ -202,6 +209,7 @@ const register = (moduleRegistry) => {
 
   const SurfacePicker = () => {
     const open = useValue(surfacePickerOpen$);
+    const collapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
     const savedX = useValue(surfacePickerX$);
     const savedY = useValue(surfacePickerY$);
     const savedWidth = useValue(surfacePickerWidth$);
@@ -272,9 +280,15 @@ const register = (moduleRegistry) => {
         // Keep selections that are currently filtered out. They remain part of the rule
         // and can be removed later by enabling their category in mod settings.
         setSelectedIds(new Set(pickerContext.selectedIds || []));
+        try {
+          setCollapsedGroups(JSON.parse(collapsedGroupsJson || "{}"));
+        } catch (error) {
+          console.error("[AutomaticTextureReplacer] Invalid collapsed groups state", error);
+          setCollapsedGroups({});
+        }
         lastSelection.current = null;
       }
-    }, [open, pickerContext]);
+    }, [open, pickerContext, collapsedGroupsJson]);
 
     const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - savedWidth) / 2)) : savedX;
     const initialY = savedY < 0 ? Math.max(0, Math.round((window.innerHeight - savedHeight) / 2)) : savedY;
@@ -394,6 +408,7 @@ const register = (moduleRegistry) => {
       const next = {};
       groups.forEach((group) => { next[group.name] = collapsed; });
       setCollapsedGroups(next);
+      trigger("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
     };
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
@@ -436,7 +451,11 @@ const register = (moduleRegistry) => {
     };
     const sections = groups.map((group) => {
       const collapsed = !!collapsedGroups[group.name];
-      const toggle = () => setCollapsedGroups((current) => ({ ...current, [group.name]: !current[group.name] }));
+      const toggle = () => {
+        const next = { ...collapsedGroups, [group.name]: !collapsedGroups[group.name] };
+        setCollapsedGroups(next);
+        trigger("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
+      };
       const groupToggle = h("div", {
         className: "atrPickerGroupToggle",
         onClick: toggle,
@@ -504,6 +523,7 @@ const register = (moduleRegistry) => {
     const savedHeight = useValue(dialogHeight$);
     const fontSize = useValue(dialogFontSize$);
     const showRevertAllButton = useValue(showRevertAllButton$);
+    const replacementScope = useValue(replacementScope$);
     const rulesJson = useValue(rulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
     const dialogRef = React.useRef(null);
@@ -654,6 +674,25 @@ const register = (moduleRegistry) => {
     };
 
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
+    const scopeOptions = [
+      ["assets", "Assets"],
+      ["hand-drawn-surfaces", "Hand-drawn surfaces"],
+      ["all", "All"],
+    ];
+    const scopeSelector = h("div", {
+      className: "atrReplacementScopeGroup",
+      role: "radiogroup",
+      "aria-label": "Surface replacement scope",
+    }, scopeOptions.map(([value, label]) => {
+      const selected = replacementScope === value;
+      return createButton(label, () => trigger("automatictexturereplacer", "setReplacementScope", value), {
+        variant: "primary",
+        className: "atrReplacementScopeOption" + (selected ? " atrReplacementScopeOptionSelected" : ""),
+        buttonProps: { role: "radio", "aria-checked": selected, tabIndex: selected ? 0 : -1 },
+        fontSize: scaledFontSize,
+        style: BUTTON_STYLE.scope,
+      });
+    }));
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
       h("div", { className: "atrRulesToolbar" },
@@ -675,6 +714,7 @@ const register = (moduleRegistry) => {
           fontSize: scaledFontSize,
           style: BUTTON_STYLE.standard,
         })),
+      scopeSelector,
       h(ui.PanelSectionRow, {
         disableFocus: true,
         className: "atrRulesHeader",
