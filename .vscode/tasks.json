@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Paradox Mods: Publish new mod",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["publish", "${workspaceFolder}/AutomaticTextureReplacer/AutomaticTextureReplacer.csproj", "--configuration", "Release", "-p:ModPublisherCommand=Publish"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Paradox Mods: Publish new version",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["publish", "${workspaceFolder}/AutomaticTextureReplacer/AutomaticTextureReplacer.csproj", "--configuration", "Release", "-p:ModPublisherCommand=NewVersion"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Paradox Mods: Update listing only",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["publish", "${workspaceFolder}/AutomaticTextureReplacer/AutomaticTextureReplacer.csproj", "--configuration", "Release", "-p:ModPublisherCommand=Update"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

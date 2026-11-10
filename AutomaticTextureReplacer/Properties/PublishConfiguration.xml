@@ -1,0 +1,19 @@
+<Publish>
+	<!-- Leave ModId empty until this mod has its own Paradox Mods listing. -->
+	<ModId Value="" />
+	<DisplayName Value="Automatic Texture Replacer" />
+	<ShortDescription Value="Automatically replaces selected textures in Cities: Skylines II." />
+	<LongDescription>
+# Automatic Texture Replacer
+
+Project scaffold for a Cities: Skylines II mod that will automatically replace selected textures.
+
+<!-- Replace this text with the finished mod description before publishing. -->
+	</LongDescription>
+	<Thumbnail Value="" />
+	<ModVersion Value="0.1.0" />
+	<GameVersion Value="" />
+	<ChangeLog Value="Initial development version." />
+	<AccessLevel Value="Private" />
+	<Dependency Id="79634" DisplayName="Asset Icon Library" Version="" />
+</Publish>
