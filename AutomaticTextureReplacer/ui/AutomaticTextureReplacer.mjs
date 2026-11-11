@@ -84,6 +84,7 @@ const register = (moduleRegistry) => {
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("automatictexturereplacer", "surfaceCatalog", "[]");
+  const areaCatalog$ = bindValue("automatictexturereplacer", "areaCatalog", "[]");
   const surfacePickerOpen$ = bindValue("automatictexturereplacer", "surfacePickerOpen", false);
   const surfacePickerCollapsedGroups$ = bindValue("automatictexturereplacer", "surfacePickerCollapsedGroups", "{}");
   const surfacePickerX$ = bindValue("automatictexturereplacer", "surfacePickerX", -1);
@@ -93,12 +94,14 @@ const register = (moduleRegistry) => {
   const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
   const replacementScope$ = bindValue("automatictexturereplacer", "replacementScope", "assets");
+  const activeMainTab$ = bindValue("automatictexturereplacer", "activeMainTab", "surfaces");
   const alsoNewBuildings$ = bindValue("automatictexturereplacer", "alsoNewBuildings", false);
   const showInGameSurfacesAsTargets$ = bindValue("automatictexturereplacer", "showInGameSurfacesAsTargets", false);
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("automatictexturereplacer", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("automatictexturereplacer", "showModSurfacesAsSources", false);
   const showRevertAllButton$ = bindValue("automatictexturereplacer", "showRevertAllButton", false);
   const rulesJson$ = bindValue("automatictexturereplacer", "rulesJson", "[]");
+  const areaRulesJson$ = bindValue("automatictexturereplacer", "areaRulesJson", "[]");
   const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
@@ -108,19 +111,22 @@ const register = (moduleRegistry) => {
   h("span", null, surface.menuPath || "In-game asset"),
   h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
 
-  const RuleRow = React.memo(({ rule, deleteRule, setRuleEnabled, openSurfacePicker, catalogById, scaledFontSize, rowIndex }) => {
+  const RuleRow = React.memo(({ rule, ruleKind, deleteRule, setRuleEnabled, openSurfacePicker, surfaceCatalogById, areaCatalogById, scaledFontSize, rowIndex }) => {
     const lastPickerOpenAt = React.useRef(0);
     const openPickerOnce = (side) => {
       const now = Date.now();
       if (now - lastPickerOpenAt.current < 250) return;
       lastPickerOpenAt.current = now;
-      openSurfacePicker(rule, side);
+      openSurfacePicker(rule, side, ruleKind);
     };
     const checkbox = GameCheckbox
       ? h(GameCheckbox, { checked: rule.enabled, focusKey: FocusDisabled, className: "atrRuleCheckbox", style: { width: "38rem", height: "38rem" }, onChange: (enabled) => setRuleEnabled(rule.id, enabled) })
       : h("span", null, rule.enabled ? "✓" : "");
     const surfaces = (title, side) => {
-      const ids = rule[side === "source" ? "sourceSurfaceIds" : "targetSurfaceIds"] || [];
+      const sourceIsArea = ruleKind === "areas" && side === "source";
+      const idsKey = side === "target" ? "targetSurfaceIds" : sourceIsArea ? "sourceAreaIds" : "sourceSurfaceIds";
+      const catalogById = sourceIsArea ? areaCatalogById : surfaceCatalogById;
+      const ids = rule[idsKey] || [];
       const icons = ids.map((id) => catalogById.get(id)).filter(Boolean).map((surface) => {
         const icon = h("img", {
           className: "atrRuleSurfaceIcon",
@@ -149,9 +155,9 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, icons)));
     };
     const actions = h("div", { className: "atrRuleActions" },
-      createButton("Replace", () => trigger("automatictexturereplacer", "replaceSurfaces", String(rule.id)), {
+      createButton("Replace", () => trigger("automatictexturereplacer", ruleKind === "areas" ? "replaceAreas" : "replaceSurfaces", String(rule.id)), {
         variant: "primary",
-        title: "Replace rule",
+        title: ruleKind === "areas" ? "Replace this industry area" : "Replace rule",
         className: "atrReplaceButton",
         fontSize: scaledFontSize,
         style: BUTTON_STYLE.standard,
@@ -167,7 +173,7 @@ const register = (moduleRegistry) => {
     return h("div", {
       className: "atrRuleRow" + (rowIndex % 2 ? " atrRuleRowAlternate" : ""),
     },
-    h("div", { className: "atrRuleLeftCell" }, checkbox, surfaces("Edit source surfaces", "source")),
+    h("div", { className: "atrRuleLeftCell" }, checkbox, surfaces(ruleKind === "areas" ? "Edit source industries" : "Edit source surfaces", "source")),
     surfaces("Edit replacement surfaces", "target"),
     actions);
   });
@@ -220,8 +226,10 @@ const register = (moduleRegistry) => {
     const showSpecialIndustrySurfacesAsTargets = useValue(showSpecialIndustrySurfacesAsTargets$);
     const showModSurfacesAsSources = useValue(showModSurfacesAsSources$);
     const catalogJson = useValue(surfaceCatalog$);
+    const areaCatalogJson = useValue(areaCatalog$);
     const contextJson = useValue(surfacePickerContext$);
     const rulesJson = useValue(rulesJson$);
+    const areaRulesJson = useValue(areaRulesJson$);
     const [selectedIds, setSelectedIds] = React.useState(() => new Set());
     const [collapsedGroups, setCollapsedGroups] = React.useState({});
     const lastSelection = React.useRef(null);
@@ -237,6 +245,14 @@ const register = (moduleRegistry) => {
         return [];
       }
     }, [catalogJson]);
+    const areaCatalog = React.useMemo(() => {
+      try {
+        return JSON.parse(areaCatalogJson || "[]");
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid special industry catalog", error);
+        return [];
+      }
+    }, [areaCatalogJson]);
     const pickerContext = React.useMemo(() => {
       try {
         return JSON.parse(contextJson || "{}");
@@ -247,6 +263,7 @@ const register = (moduleRegistry) => {
     }, [contextJson]);
     const targetPicker = pickerContext.side === "target";
     const pickerCatalog = React.useMemo(() => {
+      if (pickerContext.kind === "areas" && !targetPicker) return areaCatalog;
       if (targetPicker) {
         return catalog.filter((surface) => {
           if (surface.sourceOnly === true || surface.sourceOnly === "True") return false;
@@ -262,7 +279,7 @@ const register = (moduleRegistry) => {
           (surface.isMod !== true && surface.isMod !== "True") || selectedIds.has(surface.id));
       }
       return catalog;
-    }, [catalog, targetPicker, showInGameSurfacesAsTargets, showSpecialIndustrySurfacesAsTargets, showModSurfacesAsSources, selectedIds]);
+    }, [catalog, areaCatalog, pickerContext.kind, targetPicker, showInGameSurfacesAsTargets, showSpecialIndustrySurfacesAsTargets, showModSurfacesAsSources, selectedIds]);
     const groups = React.useMemo(() => {
       const grouped = new Map();
       pickerCatalog.forEach((surface) => {
@@ -357,13 +374,16 @@ const register = (moduleRegistry) => {
     const closePicker = () => trigger("automatictexturereplacer", "closeSurfacePicker");
     const applySelection = () => {
       const selectedIdsArray = Array.from(selectedIds);
-      const sideProperty = pickerContext.side === "target" ? "targetSurfaceIds" : "sourceSurfaceIds";
+        const sideProperty = pickerContext.side === "target"
+          ? "targetSurfaceIds"
+          : pickerContext.kind === "areas" ? "sourceAreaIds" : "sourceSurfaceIds";
+        const sourceJson = pickerContext.kind === "areas" ? areaRulesJson : rulesJson;
       try {
-        const rules = JSON.parse(rulesJson || "[]");
+        const rules = JSON.parse(sourceJson || "[]");
         const updatedRules = rules.map((rule) => String(rule.id) === String(pickerContext.rowId)
           ? { ...rule, [sideProperty]: selectedIdsArray }
           : rule);
-        trigger("automatictexturereplacer", "saveRules", JSON.stringify(updatedRules));
+        trigger("automatictexturereplacer", pickerContext.kind === "areas" ? "saveAreaRules" : "saveRules", JSON.stringify(updatedRules));
       } catch (error) {
         console.error("[AutomaticTextureReplacer] Failed to apply surface selection", error);
       }
@@ -486,8 +506,8 @@ const register = (moduleRegistry) => {
       button("Cancel", closePicker, "flat"));
     const body = h("div", { className: "atrPickerBody", style: { fontSize: scaledFontSize } },
       groupControls,
-      catalog.length === 0
-        ? h("div", { className: "atrPickerEmpty" }, "No surfaces found.")
+      pickerCatalog.length === 0
+        ? h("div", { className: "atrPickerEmpty" }, pickerContext.kind === "areas" && pickerContext.side === "source" ? "No special industries found." : "No surfaces found.")
         : h(ui.Scrollable || "div", { className: "atrPickerScroll", vertical: true, useNewStyle: true },
           h("div", { className: "atrPickerGroups" }, sections)),
       footer);
@@ -499,7 +519,8 @@ const register = (moduleRegistry) => {
       h(ui.Panel, {
         className: "atrPickerPanel",
         contentClassName: "atrPickerPanelContent",
-      header: h("div", { className: "atrDialogHeader atrPickerHeader", onMouseDownCapture: beginDrag }, "Select a surface"),
+      header: h("div", { className: "atrDialogHeader atrPickerHeader", onMouseDownCapture: beginDrag },
+        pickerContext.kind === "areas" && pickerContext.side === "source" ? "Select a special industry" : "Select a surface"),
         onClose: closePicker,
       }, body), resizeCorners);
   };
@@ -513,16 +534,26 @@ const register = (moduleRegistry) => {
     const fontSize = useValue(dialogFontSize$);
     const showRevertAllButton = useValue(showRevertAllButton$);
     const replacementScope = useValue(replacementScope$);
+    const savedActiveTab = useValue(activeMainTab$);
     const alsoNewBuildings = useValue(alsoNewBuildings$);
     const rulesJson = useValue(rulesJson$);
+    const areaRulesJson = useValue(areaRulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
+    const areaCatalogJson = useValue(areaCatalog$);
     const dialogRef = React.useRef(null);
     const rulesScrollRef = React.useRef(null);
     const nextRuleId = React.useRef(1);
+    const nextAreaRuleId = React.useRef(1);
     const rulesRef = React.useRef([]);
+    const areaRulesRef = React.useRef([]);
     const [dragPosition, setDragPosition] = React.useState(null);
     const [size, setSize] = React.useState(null);
     const [rules, setRules] = React.useState([]);
+    const [areaRules, setAreaRules] = React.useState([]);
+    const [activeTab, setActiveTab] = React.useState(savedActiveTab === "areas" ? "areas" : "surfaces");
+    React.useEffect(() => {
+      setActiveTab(savedActiveTab === "areas" ? "areas" : "surfaces");
+    }, [savedActiveTab]);
     const catalog = React.useMemo(() => {
       try {
         return JSON.parse(catalogJson || "[]");
@@ -532,6 +563,15 @@ const register = (moduleRegistry) => {
       }
     }, [catalogJson]);
     const catalogById = React.useMemo(() => new Map(catalog.map((surface) => [surface.id, surface])), [catalog]);
+    const areaCatalog = React.useMemo(() => {
+      try {
+        return JSON.parse(areaCatalogJson || "[]");
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid special industry catalog", error);
+        return [];
+      }
+    }, [areaCatalogJson]);
+    const areaCatalogById = React.useMemo(() => new Map(areaCatalog.map((industry) => [industry.id, industry])), [areaCatalog]);
     React.useEffect(() => {
       try {
         const loaded = JSON.parse(rulesJson || "[]");
@@ -552,22 +592,58 @@ const register = (moduleRegistry) => {
         setRules([]);
       }
     }, [rulesJson]);
+    React.useEffect(() => {
+      try {
+        const loaded = JSON.parse(areaRulesJson || "[]");
+        const normalized = Array.isArray(loaded) ? loaded.map((rule, index) => ({
+          id: rule.id ?? index + 1,
+          enabled: rule.enabled !== false,
+          sourceAreaIds: Array.isArray(rule.sourceAreaIds) ? rule.sourceAreaIds : [],
+          targetSurfaceIds: Array.isArray(rule.targetSurfaceIds) ? rule.targetSurfaceIds : [],
+        })) : [];
+        areaRulesRef.current = normalized;
+        setAreaRules(normalized);
+        const highestNumericId = normalized.reduce((highest, rule) =>
+          Number.isFinite(Number(rule.id)) ? Math.max(highest, Number(rule.id)) : highest, 0);
+        nextAreaRuleId.current = Math.max(nextAreaRuleId.current, highestNumericId + 1);
+      } catch (error) {
+        console.error("[AutomaticTextureReplacer] Invalid saved area rules", error);
+        areaRulesRef.current = [];
+        setAreaRules([]);
+      }
+    }, [areaRulesJson]);
     const persistRules = React.useCallback((nextRules) => {
       rulesRef.current = nextRules;
       setRules(nextRules);
       trigger("automatictexturereplacer", "saveRules", JSON.stringify(nextRules));
     }, []);
-    const deleteRule = React.useCallback((id) => {
-      persistRules(rulesRef.current.filter((item) => String(item.id) !== String(id)));
-    }, [persistRules]);
-    const setRuleEnabled = React.useCallback((id, enabled) => {
-      persistRules(rulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
-    }, [persistRules]);
-    const openSurfacePicker = React.useCallback((rule, side) => {
-      const selectedIds = side === "target" ? rule.targetSurfaceIds : rule.sourceSurfaceIds;
+    const persistAreaRules = React.useCallback((nextRules) => {
+      areaRulesRef.current = nextRules;
+      setAreaRules(nextRules);
+      trigger("automatictexturereplacer", "saveAreaRules", JSON.stringify(nextRules));
+    }, []);
+    const deleteRule = React.useCallback((id, kind) => {
+      if (kind === "areas") {
+        persistAreaRules(areaRulesRef.current.filter((item) => String(item.id) !== String(id)));
+      } else {
+        persistRules(rulesRef.current.filter((item) => String(item.id) !== String(id)));
+      }
+    }, [persistAreaRules, persistRules]);
+    const setRuleEnabled = React.useCallback((id, enabled, kind) => {
+      if (kind === "areas") {
+        persistAreaRules(areaRulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
+      } else {
+        persistRules(rulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
+      }
+    }, [persistAreaRules, persistRules]);
+    const openSurfacePicker = React.useCallback((rule, side, kind) => {
+      const selectedIds = side === "target"
+        ? rule.targetSurfaceIds
+        : kind === "areas" ? rule.sourceAreaIds : rule.sourceSurfaceIds;
       trigger("automatictexturereplacer", "openSurfacePicker", JSON.stringify({
         rowId: rule.id,
         side,
+        kind,
         selectedIds: selectedIds || [],
       }));
     }, []);
@@ -631,27 +707,33 @@ const register = (moduleRegistry) => {
     };
 
     const addRule = () => {
+      const isAreas = activeTab === "areas";
       const newRule = {
-        id: nextRuleId.current++,
+        id: isAreas ? nextAreaRuleId.current++ : nextRuleId.current++,
         enabled: true,
-        sourceSurfaceIds: [],
+        ...(isAreas ? { sourceAreaIds: [] } : { sourceSurfaceIds: [] }),
         targetSurfaceIds: [],
       };
-      persistRules([...rulesRef.current, newRule]);
+      const nextRules = isAreas ? [...areaRulesRef.current, newRule] : [...rulesRef.current, newRule];
+      if (isAreas) persistAreaRules(nextRules);
+      else persistRules(nextRules);
       window.requestAnimationFrame(() => {
         const scrollArea = rulesScrollRef.current;
         if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
       });
     };
 
-    const rows = rules.map((rule, index) => h(RuleRow, {
-      key: rule.id,
+    const activeRules = activeTab === "areas" ? areaRules : rules;
+    const rows = activeRules.map((rule, index) => h(RuleRow, {
+      key: `${activeTab}-${rule.id}`,
       rule,
+      ruleKind: activeTab,
       rowIndex: index,
-      deleteRule,
-      setRuleEnabled,
+      deleteRule: (id) => deleteRule(id, activeTab),
+      setRuleEnabled: (id, enabled) => setRuleEnabled(id, enabled, activeTab),
       openSurfacePicker,
-      catalogById,
+      surfaceCatalogById: catalogById,
+      areaCatalogById,
       scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
     }));
 
@@ -705,17 +787,33 @@ const register = (moduleRegistry) => {
         hideOnInteraction: false,
       }, alsoNewBuildingsControl)
       : alsoNewBuildingsControl;
-    const scopeSelector = h("div", { className: "atrScopeToolbar" }, scopeOptionsGroup, alsoNewBuildingsTooltip);
+    const scopeSelector = h("div", { className: "atrScopeToolbar" + (activeTab === "areas" ? " atrScopeToolbarAreas" : "") },
+      activeTab === "surfaces" ? scopeOptionsGroup : null,
+      alsoNewBuildingsTooltip);
+    const tabs = h("div", { className: "atrMainTabs", role: "tablist", "aria-label": "Replacement category" },
+      [["surfaces", "Surfaces"], ["areas", "Areas"]].map(([tab, label]) => createButton(label, () => {
+        setActiveTab(tab);
+        trigger("automatictexturereplacer", "setActiveMainTab", tab);
+      }, {
+        variant: "primary",
+        className: "atrMainTab" + (activeTab === tab ? " atrMainTabSelected" : ""),
+        buttonProps: { role: "tab", "aria-selected": activeTab === tab },
+        fontSize: scaledFontSize,
+        style: BUTTON_STYLE.standard,
+      })));
+    const replacementTrigger = activeTab === "areas" ? "replaceAreas" : "replaceSurfaces";
+    const revertTrigger = activeTab === "areas" ? "revertAllAreas" : "revertAllSurfaces";
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
+      tabs,
       h("div", { className: "atrRulesToolbar" },
         h("div", { className: "atrRulesToolbarLeft" },
-          createButton("Replace All", () => trigger("automatictexturereplacer", "replaceSurfaces", ""), {
+          createButton("Replace All", () => trigger("automatictexturereplacer", replacementTrigger, ""), {
             variant: "primary",
             fontSize: scaledFontSize,
             style: BUTTON_STYLE.standard,
           }),
-          showRevertAllButton && createButton("Revert All", () => trigger("automatictexturereplacer", "revertAllSurfaces"), {
+          showRevertAllButton && createButton("Revert All", () => trigger("automatictexturereplacer", revertTrigger), {
             variant: "primary",
             className: "atrRevertAllButton",
             fontSize: scaledFontSize,
@@ -733,7 +831,7 @@ const register = (moduleRegistry) => {
         className: "atrRulesHeader",
         left: h("div", { className: "atrHeaderSource" },
           h("span", { className: "atrCheckboxSpacer" }),
-          h("strong", { style: { fontSize: scaledFontSize } }, "Surfaces to replace")),
+          h("strong", { style: { fontSize: scaledFontSize } }, activeTab === "areas" ? "Special industries to replace" : "Surfaces to replace")),
         center: h("strong", { style: { fontSize: scaledFontSize } }, "Replacement surfaces"),
         right: null,
       }),

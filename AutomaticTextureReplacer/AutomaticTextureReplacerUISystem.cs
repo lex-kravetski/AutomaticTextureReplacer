@@ -27,6 +27,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_DialogHeight;
         private ValueBinding<int> m_DialogFontSize;
         private ValueBinding<string> m_ReplacementScope;
+        private ValueBinding<string> m_ActiveMainTab;
         private ValueBinding<bool> m_AlsoNewBuildings;
         private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
@@ -40,9 +41,10 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_SurfacePickerContext;
         private ValueBinding<string> m_SurfacePickerCollapsedGroups;
         private ValueBinding<string> m_SurfaceCatalog;
+        private ValueBinding<string> m_AreaCatalog;
         private ValueBinding<string> m_RulesJson;
+        private ValueBinding<string> m_AreaRulesJson;
         private EntityQuery m_SurfaceQuery;
-        private EntityQuery m_FishExtractorPrefabQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
         private bool? m_LastShowSpecialIndustrySurfacesAsTargets;
@@ -50,8 +52,10 @@ namespace AutomaticTextureReplacer
         private bool? m_LastShowRevertAllButton;
         private bool m_SurfaceCatalogBuildStarted;
         private Task<string> m_SurfaceCatalogBuildTask;
+        private Task<string> m_AreaCatalogBuildTask;
         private int m_SurfaceCatalogSurfaceCount;
         private int m_SurfaceCatalogModSurfaceCount;
+        private int m_AreaCatalogIndustryCount;
 
         protected override void OnCreate()
         {
@@ -68,6 +72,10 @@ namespace AutomaticTextureReplacer
                 "automatictexturereplacer",
                 "replacementScope",
                 settings?.ReplacementScope ?? "assets"));
+            AddBinding(m_ActiveMainTab = new ValueBinding<string>(
+                "automatictexturereplacer",
+                "activeMainTab",
+                settings?.ActiveMainTab ?? "surfaces"));
             AddBinding(m_AlsoNewBuildings = new ValueBinding<bool>(
                 "automatictexturereplacer",
                 "alsoNewBuildings",
@@ -99,7 +107,9 @@ namespace AutomaticTextureReplacer
                 "surfacePickerCollapsedGroups",
                 settings?.SurfacePickerCollapsedGroupsJson ?? "{}"));
             AddBinding(m_SurfaceCatalog = new ValueBinding<string>("automatictexturereplacer", "surfaceCatalog", "[]"));
+            AddBinding(m_AreaCatalog = new ValueBinding<string>("automatictexturereplacer", "areaCatalog", "[]"));
             AddBinding(m_RulesJson = new ValueBinding<string>("automatictexturereplacer", "rulesJson", settings?.RulesJson ?? "[]"));
+            AddBinding(m_AreaRulesJson = new ValueBinding<string>("automatictexturereplacer", "areaRulesJson", settings?.AreaRulesJson ?? "[]"));
 
             m_SurfaceQuery = GetEntityQuery(
                 new EntityQueryDesc
@@ -118,9 +128,6 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
-            m_FishExtractorPrefabQuery = GetEntityQuery(
-                ComponentType.ReadOnly<PrefabData>(),
-                ComponentType.ReadOnly<ExtractorAreaData>());
             AddBinding(new TriggerBinding("automatictexturereplacer", "toggleDialog", () =>
                 SetDialogOpen(Mod.Settings != null && !Mod.Settings.DialogOpen)));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeDialog", () => SetDialogOpen(false)));
@@ -129,10 +136,14 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "openSurfacePicker", OpenSurfacePicker));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveAreaRules", SetAreaRulesJson));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceAreas", ReplaceAreas));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setReplacementScope", SetReplacementScope));
+            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setActiveMainTab", SetActiveMainTab));
             AddBinding(new TriggerBinding<bool>("automatictexturereplacer", "setAlsoNewBuildings", SetAlsoNewBuildings));
             AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllSurfaces", RevertAllSurfaces));
+            AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllAreas", () => SurfaceReplacementSystem.QueueAreaRevertAll()));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", SetSurfacePickerCollapsedGroups));
@@ -172,6 +183,21 @@ namespace AutomaticTextureReplacer
                 }
 
                 m_SurfaceCatalogBuildTask = null;
+            }
+
+            if (m_AreaCatalogBuildTask != null && m_AreaCatalogBuildTask.IsCompleted)
+            {
+                if (m_AreaCatalogBuildTask.Status == TaskStatus.RanToCompletion)
+                {
+                    m_AreaCatalog.Update(m_AreaCatalogBuildTask.Result);
+                    Mod.Log.InfoFormat("Special industry menu catalog cached after map load: entries={0}", m_AreaCatalogIndustryCount);
+                }
+                else if (m_AreaCatalogBuildTask.IsFaulted)
+                {
+                    Mod.Log.Error(m_AreaCatalogBuildTask.Exception, "Special industry menu catalog background processing failed");
+                }
+
+                m_AreaCatalogBuildTask = null;
             }
 
             int fontSize = Mod.Settings?.DialogFontSize ?? 100;
@@ -285,6 +311,19 @@ namespace AutomaticTextureReplacer
             m_RulesJson.Update(json);
         }
 
+        private void SetAreaRulesJson(string value)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            string json = string.IsNullOrWhiteSpace(value) ? "[]" : value;
+            Mod.Settings.AreaRulesJson = json;
+            Mod.Settings.ApplyAndSave();
+            m_AreaRulesJson.Update(json);
+        }
+
         private void ReplaceSurfaces(string requestedRuleId)
         {
             if (Mod.Settings == null)
@@ -293,6 +332,16 @@ namespace AutomaticTextureReplacer
             }
 
             SurfaceReplacementSystem.QueueReplacement(requestedRuleId, Mod.Settings.RulesJson);
+        }
+
+        private void ReplaceAreas(string requestedRuleId)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            SurfaceReplacementSystem.QueueAreaReplacement(requestedRuleId, Mod.Settings.AreaRulesJson);
         }
 
         private void SetReplacementScope(string value)
@@ -306,6 +355,18 @@ namespace AutomaticTextureReplacer
             Mod.Settings.ReplacementScope = value;
             Mod.Settings.ApplyAndSave();
             m_ReplacementScope.Update(value);
+        }
+
+        private void SetActiveMainTab(string value)
+        {
+            if (Mod.Settings == null || (value != "surfaces" && value != "areas"))
+            {
+                return;
+            }
+
+            Mod.Settings.ActiveMainTab = value;
+            Mod.Settings.ApplyAndSave();
+            m_ActiveMainTab.Update(value);
         }
 
         private void SetAlsoNewBuildings(bool value)
@@ -344,6 +405,7 @@ namespace AutomaticTextureReplacer
             }
 
             m_SurfaceCatalogBuildStarted = true;
+            StartAreaCatalogBuild(prefabSystem);
             List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
             int modSurfaceCount = 0;
@@ -414,67 +476,13 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            int forcedFishSurfaceCount = 0;
-            using (NativeArray<Entity> entities = m_FishExtractorPrefabQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    ExtractorAreaData extractor = EntityManager.GetComponentData<ExtractorAreaData>(entity);
-                    if (extractor.m_MapFeature != MapFeature.Fish ||
-                        !prefabSystem.TryGetPrefab<PrefabBase>(entity, out PrefabBase prefab) || prefab == null)
-                    {
-                        continue;
-                    }
-
-                    if (!string.Equals(prefab.name, "Inland Fish Farm Lot", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string id = prefab.GetPrefabID().ToString();
-                    if (!seen.Add(id))
-                    {
-                        continue;
-                    }
-
-                    string name = prefab.name ?? id;
-                    // The zone prefab's thumbnail:// URL is not rendered reliably in the
-                    // surface picker. Use the built-in flat UI icon shipped with Bridges & Ports.
-                    string icon = GetInlandFishFarmingIcon(prefabSystem) ??
-                                  GetUsablePrefabImage(prefab) ?? "Media/Placeholder.svg";
-                    string thumbnail = ImageSystem.GetThumbnail(prefab) ?? prefab.thumbnailUrl + "?width=512&height=512";
-                    catalog.Add(new Dictionary<string, string>
-                    {
-                        ["id"] = id,
-                        ["name"] = name,
-                        ["thumbnail"] = icon,
-                        ["tooltipThumbnail"] = thumbnail,
-                        ["group"] = "Special Industries",
-                        ["menuPath"] = "Inland Fishing Area",
-                        ["isMod"] = "False",
-                        ["sourceOnly"] = "True",
-                    });
-                    forcedFishSurfaceCount++;
-                    int renderBatch = EntityManager.HasComponent<RenderedAreaData>(entity)
-                        ? EntityManager.GetComponentData<RenderedAreaData>(entity).m_BatchIndex
-                        : -1;
-                    Mod.Log.InfoFormat(
-                        "Forced fish area source added to surface catalog: prefab='{0}', id='{1}', batch={2}",
-                        name,
-                        id,
-                        renderBatch);
-                }
-            }
-
             Mod.Log.InfoFormat(
-                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}, forcedFishAreaSources={3}, treeSuppressionFlagsAdded={4}, anarchyEnabled={5}",
+                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}, treeSuppressionFlagsAdded={3}, anarchyEnabled={4}",
                 catalog.Count,
                 modSurfaceCount,
                 m_SurfaceQuery.CalculateEntityCount(),
-                forcedFishSurfaceCount,
                 surfacesWithTreeSuppression,
-                !shouldSuppressTrees);
-            m_SurfaceCatalogSurfaceCount = catalog.Count;
+                !shouldSuppressTrees);            m_SurfaceCatalogSurfaceCount = catalog.Count;
             m_SurfaceCatalogModSurfaceCount = modSurfaceCount;
             m_SurfaceCatalogBuildTask = Task.Run(() => catalog
                 .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
@@ -482,85 +490,171 @@ namespace AutomaticTextureReplacer
                 .ContinueWith(task => JSON.Dump(task.GetAwaiter().GetResult()), TaskScheduler.Default);
         }
 
+        private void StartAreaCatalogBuild(PrefabSystem prefabSystem)
+        {
+            List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            EntityManager entityManager = prefabSystem.World.EntityManager;
+            using (EntityQuery query = entityManager.CreateEntityQuery(
+                       ComponentType.ReadOnly<PrefabData>(),
+                       ComponentType.ReadOnly<UIAssetMenuData>(),
+                       ComponentType.ReadOnly<UIGroupElement>()))
+            using (NativeArray<Entity> menuEntities = query.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity menuEntity in menuEntities)
+                {
+                    if (!prefabSystem.TryGetPrefab<UIAssetMenuPrefab>(menuEntity, out UIAssetMenuPrefab menu) || menu == null)
+                    {
+                        continue;
+                    }
+
+                    DynamicBuffer<UIGroupElement> categories = entityManager.GetBuffer<UIGroupElement>(menuEntity, true);
+                    foreach (UIGroupElement categoryEntry in categories)
+                    {
+                        if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryEntry.m_Prefab, out UIAssetCategoryPrefab category) ||
+                            category == null)
+                        {
+                            continue;
+                        }
+
+                        string menuName = menu.name ?? string.Empty;
+                        string categoryName = category.name ?? string.Empty;
+                        if (!IsIndustryMenuEntry(menuName, categoryName))
+                        {
+                            continue;
+                        }
+
+                        DynamicBuffer<UIGroupElement> menuEntries = entityManager.GetBuffer<UIGroupElement>(categoryEntry.m_Prefab, true);
+                        Mod.Log.InfoFormat(
+                            "Reading special-industry menu category: menu='{0}', category='{1}', entries={2}",
+                            menuName,
+                            categoryName,
+                            menuEntries.Length);
+                        int resolvedEntries = 0;
+                        foreach (UIGroupElement menuEntry in menuEntries)
+                        {
+                            if (!prefabSystem.TryGetPrefab<PrefabBase>(menuEntry.m_Prefab, out PrefabBase prefab) ||
+                                prefab == null)
+                            {
+                                Mod.Log.WarnFormat(
+                                    "Special-industry menu entry could not resolve to a prefab: category='{0}', entity={1}, hasPrefabData={2}",
+                                    categoryName,
+                                    menuEntry.m_Prefab,
+                                    entityManager.HasComponent<PrefabData>(menuEntry.m_Prefab));
+                                continue;
+                            }
+
+                            resolvedEntries++;
+                            string displayName = GetIndustryMenuDisplayName(prefab);
+                            bool excluded = IsExcludedIndustryEntry(prefab.name);
+                            Mod.Log.InfoFormat(
+                                "Special-industry menu entry: category='{0}', asset='{1}', displayName='{2}', prefabType='{3}', excluded={4}",
+                                categoryName,
+                                prefab.name,
+                                displayName,
+                                prefab.GetType().Name,
+                                excluded);
+                            if (excluded)
+                            {
+                                continue;
+                            }
+
+                            string id = prefab.GetPrefabID().ToString();
+                            if (!seen.Add(id))
+                            {
+                                continue;
+                            }
+
+                            string icon = ImageSystem.GetIcon(prefab);
+                            if (string.IsNullOrWhiteSpace(icon))
+                            {
+                                icon = ImageSystem.GetThumbnail(prefab);
+                            }
+
+                            catalog.Add(new Dictionary<string, string>
+                            {
+                                ["id"] = id,
+                                ["name"] = displayName ?? id,
+                                ["thumbnail"] = icon ?? "Media/Placeholder.svg",
+                                ["tooltipThumbnail"] = icon ?? "Media/Placeholder.svg",
+                                ["group"] = categoryName,
+                                ["menuPath"] = string.IsNullOrEmpty(menuName) ? categoryName : menuName + " / " + categoryName,
+                                ["isMod"] = (!prefab.isBuiltin).ToString(),
+                            });
+                        }
+                        Mod.Log.InfoFormat(
+                            "Special-industry menu category processed: category='{0}', resolvedEntries={1}, catalogEntries={2}",
+                            categoryName,
+                            resolvedEntries,
+                            catalog.Count);
+                    }
+                }
+            }
+
+            m_AreaCatalogIndustryCount = catalog.Count;
+            m_AreaCatalogBuildTask = Task.Run(() => catalog
+                .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
+                .ToList())
+                .ContinueWith(task => JSON.Dump(task.GetAwaiter().GetResult()), TaskScheduler.Default);
+            Mod.Log.InfoFormat("Special industry menu catalog captured: entries={0}", m_AreaCatalogIndustryCount);
+        }
+
+        private static bool IsIndustryMenuEntry(string menuName, string categoryName)
+        {
+            // The menu is enumerated through its own UIGroupElement buffer. The
+            // category name identifies the specialized-industry section; don't
+            // depend on the internal menu prefab's localized/display name.
+            bool isSpecialIndustryCategory =
+                categoryName.IndexOf("special", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                categoryName.IndexOf("industry", StringComparison.OrdinalIgnoreCase) >= 0;
+            return isSpecialIndustryCategory ||
+                   (categoryName.IndexOf("extractor", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    menuName.IndexOf("zone", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static string GetIndustryMenuDisplayName(PrefabBase prefab)
+        {
+            if (prefab == null)
+            {
+                return null;
+            }
+
+            string localeId = "Assets.NAME[" + prefab.name + "]";
+            GameManager gameManager = GameManager.instance;
+            string displayName = null;
+            if (gameManager?.localizationManager?.activeDictionary != null &&
+                gameManager.localizationManager.activeDictionary.TryGetValue(localeId, out string localizedName) &&
+                !string.IsNullOrWhiteSpace(localizedName) &&
+                !string.Equals(localizedName, localeId, StringComparison.Ordinal))
+            {
+                displayName = localizedName;
+            }
+
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                displayName = prefab.name;
+            }
+
+            return displayName.Replace("Placeholder", string.Empty).Trim();
+        }
+
+        private static bool IsExcludedIndustryEntry(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return true;
+            }
+
+            string normalizedName = new string(name.Where(character => !char.IsWhiteSpace(character)).ToArray());
+            return string.Equals(normalizedName, "AquacultureAreaPlaceholder-Water", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalizedName, "OffshoreOilIndustryPlaceholder", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsExcludedSurfaceName(string name)
         {
             return name.EndsWith("Placeholder", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "Surface Area", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "Missing Area", StringComparison.OrdinalIgnoreCase);
-        }
-
-        public static bool IsSpecialIndustrySurface(PrefabSystem prefabSystem, Entity prefabEntity)
-        {
-            if (prefabEntity == Entity.Null)
-            {
-                return false;
-            }
-
-            if (prefabSystem != null && prefabSystem.TryGetPrefab<SurfacePrefab>(prefabEntity, out SurfacePrefab prefab) &&
-                prefab != null && string.Equals(GetSurfaceGroup(prefab), "Special Industries", StringComparison.Ordinal))
-            {
-                return true;
-            }
-
-            if (World.DefaultGameObjectInjectionWorld == null ||
-                !World.DefaultGameObjectInjectionWorld.EntityManager.HasComponent<ExtractorAreaData>(prefabEntity) ||
-                World.DefaultGameObjectInjectionWorld.EntityManager.GetComponentData<ExtractorAreaData>(prefabEntity).m_MapFeature != MapFeature.Fish ||
-                prefabSystem == null || !prefabSystem.TryGetPrefab<PrefabBase>(prefabEntity, out PrefabBase fishPrefab))
-            {
-                return false;
-            }
-
-            return fishPrefab != null && string.Equals(fishPrefab.name, "Inland Fish Farm Lot", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string GetInlandFishFarmingIcon(PrefabSystem prefabSystem)
-        {
-            // The menu icon belongs to the zone prefab. Its internal prefab name
-            // is "Industrial Aquaculture - Land"; "Inland Fish Farming" is the
-            // displayed specialization name, not the prefab name.
-            using (EntityQuery query = prefabSystem.World.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<PrefabData>()))
-            using (NativeArray<Entity> prefabs = query.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in prefabs)
-                {
-                    if (!prefabSystem.TryGetPrefab<PrefabBase>(entity, out PrefabBase prefab) || prefab == null ||
-                        !string.Equals(prefab.name, "Industrial Aquaculture - Land", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string icon = "Media/Game/Resources/AquacultureAreaLand.svg";
-                    if (IsUsablePrefabImage(icon))
-                    {
-                        Mod.Log.InfoFormat(
-                            "Inland fish area icon resolved from built-in resource icon: prefab='{0}', image='{1}'",
-                            prefab.name,
-                            icon);
-                        return icon;
-                    }
-                }
-            }
-
-            Mod.Log.Warn("Inland fish area icon prefab 'Industrial Aquaculture - Land' was not found");
-            return null;
-        }
-
-        private static string GetUsablePrefabImage(PrefabBase prefab)
-        {
-            string icon = ImageSystem.GetIcon(prefab);
-            if (IsUsablePrefabImage(icon))
-            {
-                return icon;
-            }
-
-            string thumbnail = ImageSystem.GetThumbnail(prefab);
-            return IsUsablePrefabImage(thumbnail) ? thumbnail : null;
-        }
-
-        private static bool IsUsablePrefabImage(string image)
-        {
-            return !string.IsNullOrWhiteSpace(image) &&
-                   !string.Equals(image, "Media/Placeholder.svg", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetSurfaceGroup(SurfacePrefab prefab)

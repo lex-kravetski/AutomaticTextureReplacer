@@ -38,6 +38,9 @@ namespace AutomaticTextureReplacer
         public string ReplacementScope { get; set; } = "assets";
 
         [SettingsUIHidden]
+        public string ActiveMainTab { get; set; } = "surfaces";
+
+        [SettingsUIHidden]
         public bool AlsoNewBuildings { get; set; }
 
         // -1 means that the dialog has not been positioned by the player yet.
@@ -77,6 +80,9 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public string RulesJson { get; set; } = "[]";
 
+        [SettingsUIHidden]
+        public string AreaRulesJson { get; set; } = "[]";
+
         public override void SetDefaults()
         {
             DialogOpen = true;
@@ -92,12 +98,14 @@ namespace AutomaticTextureReplacer
             SurfacePickerContextJson = "";
             SurfacePickerCollapsedGroupsJson = "{}";
             RulesJson = "[]";
+            AreaRulesJson = "[]";
             DialogFontSize = 100;
             ShowInGameSurfacesAsTargets = false;
             ShowSpecialIndustrySurfacesAsTargets = false;
             ShowModSurfacesAsSources = false;
             ShowRevertAllButton = false;
             ReplacementScope = "assets";
+            ActiveMainTab = "surfaces";
             AlsoNewBuildings = false;
         }
     }
