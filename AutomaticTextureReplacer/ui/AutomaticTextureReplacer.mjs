@@ -415,20 +415,7 @@ const register = (moduleRegistry) => {
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
       const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize);
-      const modBadgeImage = h("img", {
-        className: "atrParadoxModsBadge",
-        src: "coui://game/UI/Media/Glyphs/ParadoxMods.svg",
-        alt: "Paradox Mods",
-        title: surface.group,
-      });
-      const modBadge = surface.isMod === "True"
-        ? ui.Tooltip
-          ? h(ui.Tooltip, { tooltip: surface.group, delayTime: 0, hideOnInteraction: false }, modBadgeImage)
-          : modBadgeImage
-        : null;
-      const tileContents = h(React.Fragment, null,
-        h("img", { src: surface.thumbnail, alt: surface.name }),
-        modBadge);
+      const tileContents = h("img", { src: surface.thumbnail, alt: surface.name });
       const handleSelect = () => selectSurface(group, index, surface, pendingShiftClick.current);
       const tileClassName = "atrSurfaceTile" + (selected ? " atrSurfaceTileSelected" : "");
       const tile = ui.Button

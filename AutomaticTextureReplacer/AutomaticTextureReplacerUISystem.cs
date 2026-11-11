@@ -438,8 +438,10 @@ namespace AutomaticTextureReplacer
                     }
 
                     string name = prefab.name ?? id;
+                    // The zone prefab's thumbnail:// URL is not rendered reliably in the
+                    // surface picker. Use the built-in flat UI icon shipped with Bridges & Ports.
                     string icon = GetInlandFishFarmingIcon(prefabSystem) ??
-                                  ImageSystem.GetIcon(prefab) ?? ImageSystem.GetThumbnail(prefab) ?? "Media/Placeholder.svg";
+                                  GetUsablePrefabImage(prefab) ?? "Media/Placeholder.svg";
                     string thumbnail = ImageSystem.GetThumbnail(prefab) ?? prefab.thumbnailUrl + "?width=512&height=512";
                     catalog.Add(new Dictionary<string, string>
                     {
@@ -513,22 +515,52 @@ namespace AutomaticTextureReplacer
 
         private static string GetInlandFishFarmingIcon(PrefabSystem prefabSystem)
         {
+            // The menu icon belongs to the zone prefab. Its internal prefab name
+            // is "Industrial Aquaculture - Land"; "Inland Fish Farming" is the
+            // displayed specialization name, not the prefab name.
             using (EntityQuery query = prefabSystem.World.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<PrefabData>()))
             using (NativeArray<Entity> prefabs = query.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in prefabs)
                 {
                     if (!prefabSystem.TryGetPrefab<PrefabBase>(entity, out PrefabBase prefab) || prefab == null ||
-                        !string.Equals(prefab.name, "Inland Fish Farming", StringComparison.OrdinalIgnoreCase))
+                        !string.Equals(prefab.name, "Industrial Aquaculture - Land", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    return ImageSystem.GetIcon(prefab) ?? ImageSystem.GetThumbnail(prefab);
+                    string icon = "Media/Game/Resources/AquacultureAreaLand.svg";
+                    if (IsUsablePrefabImage(icon))
+                    {
+                        Mod.Log.InfoFormat(
+                            "Inland fish area icon resolved from built-in resource icon: prefab='{0}', image='{1}'",
+                            prefab.name,
+                            icon);
+                        return icon;
+                    }
                 }
             }
 
+            Mod.Log.Warn("Inland fish area icon prefab 'Industrial Aquaculture - Land' was not found");
             return null;
+        }
+
+        private static string GetUsablePrefabImage(PrefabBase prefab)
+        {
+            string icon = ImageSystem.GetIcon(prefab);
+            if (IsUsablePrefabImage(icon))
+            {
+                return icon;
+            }
+
+            string thumbnail = ImageSystem.GetThumbnail(prefab);
+            return IsUsablePrefabImage(thumbnail) ? thumbnail : null;
+        }
+
+        private static bool IsUsablePrefabImage(string image)
+        {
+            return !string.IsNullOrWhiteSpace(image) &&
+                   !string.Equals(image, "Media/Placeholder.svg", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetSurfaceGroup(SurfacePrefab prefab)
