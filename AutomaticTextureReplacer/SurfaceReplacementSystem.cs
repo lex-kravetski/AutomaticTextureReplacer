@@ -1642,6 +1642,9 @@ namespace AutomaticTextureReplacer
                 int currentPrefabBatch = currentPrefab != Entity.Null && EntityManager.HasComponent<RenderedAreaData>(currentPrefab)
                     ? EntityManager.GetComponentData<RenderedAreaData>(currentPrefab).m_BatchIndex
                     : -1;
+                bool hasSpecialIndustryMarker = EntityManager.HasComponent<SpecialIndustryLotReplacement>(diagnostic.Area);
+                bool currentPrefabIsSurface = currentPrefab != Entity.Null && EntityManager.HasComponent<SurfaceData>(currentPrefab);
+                bool canRebuildAreaBatch = !hasSpecialIndustryMarker || currentPrefabIsSurface;
                 bool hasBatch = EntityManager.HasComponent<Batch>(diagnostic.Area);
                 Batch batch = hasBatch ? EntityManager.GetComponentData<Batch>(diagnostic.Area) : default(Batch);
                 bool hasUpdated = EntityManager.HasComponent<Updated>(diagnostic.Area);
@@ -1670,7 +1673,7 @@ namespace AutomaticTextureReplacer
 
                 if (prefabMatches && !batchMatches && diagnostic.ExpectedBatchIndex >= 0)
                 {
-                    if (!EntityManager.HasComponent<SpecialIndustryLotReplacement>(diagnostic.Area) && !diagnostic.RebuildAttempted)
+                    if (canRebuildAreaBatch && !diagnostic.RebuildAttempted)
                     {
                         diagnostic.RebuildAttempted = true;
                         diagnostic.FramesChecked = 0;
@@ -1703,7 +1706,7 @@ namespace AutomaticTextureReplacer
                     bool targetContainsArea = TryBatchContainsArea(diagnostic.ExpectedBatchIndex, diagnostic.Area, out _);
                     if (sourceContainsArea || !targetContainsArea)
                     {
-                        if (!EntityManager.HasComponent<SpecialIndustryLotReplacement>(diagnostic.Area) && !diagnostic.RebuildAttempted)
+                        if (canRebuildAreaBatch && !diagnostic.RebuildAttempted)
                         {
                             diagnostic.RebuildAttempted = true;
                             diagnostic.FramesChecked = 0;
