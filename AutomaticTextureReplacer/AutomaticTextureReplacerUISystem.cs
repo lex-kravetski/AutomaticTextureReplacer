@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Colossal.Json;
 using Colossal.UI.Binding;
@@ -26,6 +27,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_DialogHeight;
         private ValueBinding<int> m_DialogFontSize;
         private ValueBinding<string> m_ReplacementScope;
+        private ValueBinding<bool> m_AlsoNewBuildings;
         private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
         private ValueBinding<bool> m_ShowModSurfacesAsSources;
@@ -40,6 +42,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_SurfaceCatalog;
         private ValueBinding<string> m_RulesJson;
         private EntityQuery m_SurfaceQuery;
+        private EntityQuery m_FishExtractorPrefabQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
         private bool? m_LastShowSpecialIndustrySurfacesAsTargets;
@@ -65,6 +68,10 @@ namespace AutomaticTextureReplacer
                 "automatictexturereplacer",
                 "replacementScope",
                 settings?.ReplacementScope ?? "assets"));
+            AddBinding(m_AlsoNewBuildings = new ValueBinding<bool>(
+                "automatictexturereplacer",
+                "alsoNewBuildings",
+                settings?.AlsoNewBuildings ?? false));
             AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
                 "automatictexturereplacer",
                 "showInGameSurfacesAsTargets",
@@ -111,6 +118,9 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
+            m_FishExtractorPrefabQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PrefabData>(),
+                ComponentType.ReadOnly<ExtractorAreaData>());
             AddBinding(new TriggerBinding("automatictexturereplacer", "toggleDialog", () =>
                 SetDialogOpen(Mod.Settings != null && !Mod.Settings.DialogOpen)));
             AddBinding(new TriggerBinding("automatictexturereplacer", "closeDialog", () => SetDialogOpen(false)));
@@ -121,6 +131,7 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setReplacementScope", SetReplacementScope));
+            AddBinding(new TriggerBinding<bool>("automatictexturereplacer", "setAlsoNewBuildings", SetAlsoNewBuildings));
             AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllSurfaces", RevertAllSurfaces));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
@@ -297,6 +308,18 @@ namespace AutomaticTextureReplacer
             m_ReplacementScope.Update(value);
         }
 
+        private void SetAlsoNewBuildings(bool value)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            Mod.Settings.AlsoNewBuildings = value;
+            Mod.Settings.ApplyAndSave();
+            m_AlsoNewBuildings.Update(value);
+        }
+
         private void RevertAllSurfaces()
         {
             SurfaceReplacementSystem.QueueRevertAll();
@@ -324,6 +347,9 @@ namespace AutomaticTextureReplacer
             List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
             int modSurfaceCount = 0;
+            bool anarchyEnabled = IsAnarchyEnabled();
+            bool shouldSuppressTrees = !anarchyEnabled;
+            int surfacesWithTreeSuppression = 0;
             using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in entities)
@@ -331,6 +357,17 @@ namespace AutomaticTextureReplacer
                     if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab prefab) || prefab == null)
                     {
                         continue;
+                    }
+
+                    if (shouldSuppressTrees && EntityManager.HasComponent<AreaGeometryData>(entity))
+                    {
+                        AreaGeometryData geometry = EntityManager.GetComponentData<AreaGeometryData>(entity);
+                        if ((geometry.m_Flags & GeometryFlags.ClearArea) == 0)
+                        {
+                            geometry.m_Flags |= GeometryFlags.ClearArea;
+                            EntityManager.SetComponentData(entity, geometry);
+                            surfacesWithTreeSuppression++;
+                        }
                     }
 
                     string id = prefab.GetPrefabID().ToString();
@@ -347,10 +384,21 @@ namespace AutomaticTextureReplacer
 
                     string group = GetSurfaceGroup(prefab);
                     string menuPath = GetSurfaceMenuPath(prefab);
-                    bool isMod = !prefab.isBuiltin;
+                    bool isMod = !prefab.isBuiltin && IsOwnedByMod(prefab);
                     if (isMod)
                     {
                         modSurfaceCount++;
+                    }
+
+                    if (ContainsSpecialIndustry(name) || ContainsSpecialIndustry(menuPath))
+                    {
+                        Mod.Log.InfoFormat(
+                            "Special-industry surface catalog candidate: asset='{0}', group='{1}', menuPath='{2}', isBuiltin={3}, isMod={4}",
+                            name,
+                            group,
+                            menuPath,
+                            prefab.isBuiltin,
+                            isMod);
                     }
 
                     catalog.Add(new Dictionary<string, string>
@@ -366,11 +414,64 @@ namespace AutomaticTextureReplacer
                 }
             }
 
+            int forcedFishSurfaceCount = 0;
+            using (NativeArray<Entity> entities = m_FishExtractorPrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    ExtractorAreaData extractor = EntityManager.GetComponentData<ExtractorAreaData>(entity);
+                    if (extractor.m_MapFeature != MapFeature.Fish ||
+                        !prefabSystem.TryGetPrefab<PrefabBase>(entity, out PrefabBase prefab) || prefab == null)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(prefab.name, "Inland Fish Farm Lot", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string id = prefab.GetPrefabID().ToString();
+                    if (!seen.Add(id))
+                    {
+                        continue;
+                    }
+
+                    string name = prefab.name ?? id;
+                    string icon = GetInlandFishFarmingIcon(prefabSystem) ??
+                                  ImageSystem.GetIcon(prefab) ?? ImageSystem.GetThumbnail(prefab) ?? "Media/Placeholder.svg";
+                    string thumbnail = ImageSystem.GetThumbnail(prefab) ?? prefab.thumbnailUrl + "?width=512&height=512";
+                    catalog.Add(new Dictionary<string, string>
+                    {
+                        ["id"] = id,
+                        ["name"] = name,
+                        ["thumbnail"] = icon,
+                        ["tooltipThumbnail"] = thumbnail,
+                        ["group"] = "Special Industries",
+                        ["menuPath"] = "Inland Fishing Area",
+                        ["isMod"] = "False",
+                        ["sourceOnly"] = "True",
+                    });
+                    forcedFishSurfaceCount++;
+                    int renderBatch = EntityManager.HasComponent<RenderedAreaData>(entity)
+                        ? EntityManager.GetComponentData<RenderedAreaData>(entity).m_BatchIndex
+                        : -1;
+                    Mod.Log.InfoFormat(
+                        "Forced fish area source added to surface catalog: prefab='{0}', id='{1}', batch={2}",
+                        name,
+                        id,
+                        renderBatch);
+                }
+            }
+
             Mod.Log.InfoFormat(
-                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}",
+                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}, forcedFishAreaSources={3}, treeSuppressionFlagsAdded={4}, anarchyEnabled={5}",
                 catalog.Count,
                 modSurfaceCount,
-                m_SurfaceQuery.CalculateEntityCount());
+                m_SurfaceQuery.CalculateEntityCount(),
+                forcedFishSurfaceCount,
+                surfacesWithTreeSuppression,
+                !shouldSuppressTrees);
             m_SurfaceCatalogSurfaceCount = catalog.Count;
             m_SurfaceCatalogModSurfaceCount = modSurfaceCount;
             m_SurfaceCatalogBuildTask = Task.Run(() => catalog
@@ -386,26 +487,88 @@ namespace AutomaticTextureReplacer
                    string.Equals(name, "Missing Area", StringComparison.OrdinalIgnoreCase);
         }
 
+        public static bool IsSpecialIndustrySurface(PrefabSystem prefabSystem, Entity prefabEntity)
+        {
+            if (prefabEntity == Entity.Null)
+            {
+                return false;
+            }
+
+            if (prefabSystem != null && prefabSystem.TryGetPrefab<SurfacePrefab>(prefabEntity, out SurfacePrefab prefab) &&
+                prefab != null && string.Equals(GetSurfaceGroup(prefab), "Special Industries", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (World.DefaultGameObjectInjectionWorld == null ||
+                !World.DefaultGameObjectInjectionWorld.EntityManager.HasComponent<ExtractorAreaData>(prefabEntity) ||
+                World.DefaultGameObjectInjectionWorld.EntityManager.GetComponentData<ExtractorAreaData>(prefabEntity).m_MapFeature != MapFeature.Fish ||
+                prefabSystem == null || !prefabSystem.TryGetPrefab<PrefabBase>(prefabEntity, out PrefabBase fishPrefab))
+            {
+                return false;
+            }
+
+            return fishPrefab != null && string.Equals(fishPrefab.name, "Inland Fish Farm Lot", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetInlandFishFarmingIcon(PrefabSystem prefabSystem)
+        {
+            using (EntityQuery query = prefabSystem.World.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<PrefabData>()))
+            using (NativeArray<Entity> prefabs = query.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in prefabs)
+                {
+                    if (!prefabSystem.TryGetPrefab<PrefabBase>(entity, out PrefabBase prefab) || prefab == null ||
+                        !string.Equals(prefab.name, "Inland Fish Farming", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    return ImageSystem.GetIcon(prefab) ?? ImageSystem.GetThumbnail(prefab);
+                }
+            }
+
+            return null;
+        }
+
         private static string GetSurfaceGroup(SurfacePrefab prefab)
         {
-            if (!prefab.isBuiltin)
+            string name = prefab.name ?? string.Empty;
+            string menuPath = GetSurfaceMenuPath(prefab);
+            if (ContainsSpecialIndustry(name) || ContainsSpecialIndustry(menuPath))
             {
-                return GetModDisplayName(prefab) ?? GetSurfaceMenuPath(prefab);
+                return "Special Industries";
             }
 
-            if (prefab.isBuiltin)
+            if (IsOwnedByMod(prefab))
             {
-                string name = prefab.name ?? string.Empty;
-                string menuPath = GetSurfaceMenuPath(prefab);
-                if (ContainsSpecialIndustry(name) || ContainsSpecialIndustry(menuPath))
+                return GetModDisplayName(prefab) ?? menuPath;
+            }
+
+            return "In-game";
+        }
+
+        private static bool IsOwnedByMod(SurfacePrefab prefab)
+        {
+            return prefab != null && (FindOwningMod(prefab) != null || GetModFolderName(prefab.asset?.path) != null);
+        }
+
+        private bool IsAnarchyEnabled()
+        {
+            foreach (ComponentSystemBase system in World.Systems)
+            {
+                Type type = system.GetType();
+                if (!string.Equals(type.FullName, "Anarchy.Systems.Common.AnarchyUISystem", StringComparison.Ordinal))
                 {
-                    return "Special Industries";
+                    continue;
                 }
 
-                return "In-game";
+                PropertyInfo property = type.GetProperty("AnarchyEnabled", BindingFlags.Instance | BindingFlags.Public);
+                return property != null && property.PropertyType == typeof(bool) &&
+                       property.GetValue(system, null) is bool enabled && enabled;
             }
 
-            return GetSurfaceMenuPath(prefab);
+            return false;
         }
 
         private static bool ContainsSpecialIndustry(string value)

@@ -41,6 +41,7 @@ namespace AutomaticTextureReplacer
 
             updateSystem.UpdateAt<AutomaticTextureReplacerUISystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateBefore<SurfaceReplacementSystem, ToolOutputBarrier>(SystemUpdatePhase.ToolUpdate);
+            updateSystem.UpdateBefore<NewBuildingSurfaceReplacementSystem, GenerateAreasSystem>(SystemUpdatePhase.Modification1);
         }
 
         public void OnDispose()

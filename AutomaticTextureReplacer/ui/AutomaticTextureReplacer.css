@@ -14,9 +14,12 @@
 .atrRulesToolbar .atrButtonOuter{display:inline-flex;flex:0 0 auto;height:40rem;min-height:40rem;box-sizing:border-box;margin:8rem!important}
 .atrRulesToolbar .atrButtonOuter>.atrGameButton{display:flex!important;align-items:center!important;justify-content:center!important;height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRulesToolbar>.atrButtonOuter.atrAddRuleButton{margin-left:auto!important}
-.atrReplacementScopeGroup{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;gap:4rem;margin:0 6rem 8rem}
+.atrScopeToolbar{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;justify-content:space-between;gap:12rem;margin:0 6rem 8rem}
+.atrReplacementScopeGroup{display:flex;min-width:0;flex:0 1 auto;flex-direction:row;align-items:center;gap:4rem}
 .atrReplacementScopeOption{min-height:32rem;background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
 .atrReplacementScopeOptionSelected{background:#138b6a!important;border-color:#48d6a0!important}
+.atrAlsoNewBuildingsControl{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;gap:8rem;padding:4rem 8rem;color:rgba(255,255,255,.94);white-space:nowrap;cursor:pointer}
+.atrAlsoNewBuildingsCheckbox{width:24rem;height:24rem;min-width:24rem;min-height:24rem}
 .atrEditButton{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
 .atrRevertAllButton,.atrDeleteRuleButton{background:#8e2632!important;border:2rem solid #ef7180!important;color:rgba(255,255,255,.98)!important}
 .atrRulesHeader{flex:0 0 auto;background:rgba(26,43,59,.62);color:rgba(255,255,255,.96);font-weight:600;border-bottom:1rem solid rgba(255,255,255,.12)}
@@ -66,7 +69,7 @@
 .atrPickerGroupCount{margin-left:auto;color:rgba(210,228,237,.68)}
 .atrSurfaceGrid{display:flex;flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:6rem;padding:4rem}
 .atrSurfaceTile{width:76rem;height:76rem;flex:0 0 76rem;box-sizing:border-box;padding:4rem;border:2rem solid transparent;border-radius:3rem;overflow:hidden;background:rgba(255,255,255,.1)}
-.atrSurfaceTileSelected{border-color:#43c86b!important;box-shadow:0 0 0 1rem rgba(67,200,107,.4)}
+.atrSurfaceTileSelected{border:6rem solid #43c86b!important;box-shadow:0 0 0 3rem rgba(67,200,107,.4)}
 .atrSurfaceTile img{display:block;width:100%;height:100%;object-fit:contain}
 .atrSurfaceTooltip{display:flex;flex-direction:column;gap:3rem;max-width:300rem;white-space:normal}
 .atrSurfaceTooltip strong{color:rgba(255,255,255,.98)}

@@ -37,6 +37,9 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public string ReplacementScope { get; set; } = "assets";
 
+        [SettingsUIHidden]
+        public bool AlsoNewBuildings { get; set; }
+
         // -1 means that the dialog has not been positioned by the player yet.
         [SettingsUIHidden]
         public int DialogX { get; set; } = -1;
@@ -95,6 +98,7 @@ namespace AutomaticTextureReplacer
             ShowModSurfacesAsSources = false;
             ShowRevertAllButton = false;
             ReplacementScope = "assets";
+            AlsoNewBuildings = false;
         }
     }
 

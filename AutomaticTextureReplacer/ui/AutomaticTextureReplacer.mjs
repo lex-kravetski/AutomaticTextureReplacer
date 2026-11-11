@@ -93,6 +93,7 @@ const register = (moduleRegistry) => {
   const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
   const replacementScope$ = bindValue("automatictexturereplacer", "replacementScope", "assets");
+  const alsoNewBuildings$ = bindValue("automatictexturereplacer", "alsoNewBuildings", false);
   const showInGameSurfacesAsTargets$ = bindValue("automatictexturereplacer", "showInGameSurfacesAsTargets", false);
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("automatictexturereplacer", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("automatictexturereplacer", "showModSurfacesAsSources", false);
@@ -248,6 +249,7 @@ const register = (moduleRegistry) => {
     const pickerCatalog = React.useMemo(() => {
       if (targetPicker) {
         return catalog.filter((surface) => {
+          if (surface.sourceOnly === true || surface.sourceOnly === "True") return false;
           const groupName = surface.group || "In-game asset";
           if (groupName === "In-game" && !showInGameSurfacesAsTargets) return selectedIds.has(surface.id);
           if (groupName === "Special Industries" && !showSpecialIndustrySurfacesAsTargets) return selectedIds.has(surface.id);
@@ -524,6 +526,7 @@ const register = (moduleRegistry) => {
     const fontSize = useValue(dialogFontSize$);
     const showRevertAllButton = useValue(showRevertAllButton$);
     const replacementScope = useValue(replacementScope$);
+    const alsoNewBuildings = useValue(alsoNewBuildings$);
     const rulesJson = useValue(rulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
     const dialogRef = React.useRef(null);
@@ -679,7 +682,7 @@ const register = (moduleRegistry) => {
       ["hand-drawn-surfaces", "Hand-drawn surfaces"],
       ["all", "All"],
     ];
-    const scopeSelector = h("div", {
+    const scopeOptionsGroup = h("div", {
       className: "atrReplacementScopeGroup",
       role: "radiogroup",
       "aria-label": "Surface replacement scope",
@@ -693,6 +696,29 @@ const register = (moduleRegistry) => {
         style: BUTTON_STYLE.scope,
       });
     }));
+    const alsoNewBuildingsCheckbox = GameCheckbox
+      ? h(GameCheckbox, {
+        checked: alsoNewBuildings,
+        focusKey: FocusDisabled,
+        className: "atrAlsoNewBuildingsCheckbox",
+        onChange: (checked) => trigger("automatictexturereplacer", "setAlsoNewBuildings", checked),
+      })
+      : h("input", {
+        type: "checkbox",
+        checked: alsoNewBuildings,
+        onChange: (event) => trigger("automatictexturereplacer", "setAlsoNewBuildings", event.target.checked),
+      });
+    const alsoNewBuildingsControl = h("div", { className: "atrAlsoNewBuildingsControl" },
+      h("span", null, "Also new buildings"),
+      alsoNewBuildingsCheckbox);
+    const alsoNewBuildingsTooltip = ui.Tooltip
+      ? h(ui.Tooltip, {
+        tooltip: "Automatic replacement applies only to rules with the checkbox enabled.",
+        delayTime: 0,
+        hideOnInteraction: false,
+      }, alsoNewBuildingsControl)
+      : alsoNewBuildingsControl;
+    const scopeSelector = h("div", { className: "atrScopeToolbar" }, scopeOptionsGroup, alsoNewBuildingsTooltip);
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
       h("div", { className: "atrRulesToolbar" },
