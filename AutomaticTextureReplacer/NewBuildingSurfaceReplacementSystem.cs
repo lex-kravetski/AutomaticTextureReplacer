@@ -14,7 +14,7 @@ using Unity.Entities;
 namespace AutomaticTextureReplacer
 {
     /// <summary>
-    /// Replaces surface prefabs in creation definitions before the game creates building areas.
+    /// Maintains automatic replacement rules and handles special-industry placement.
     /// </summary>
     public sealed partial class NewBuildingSurfaceReplacementSystem : GameSystemBase
     {
@@ -43,6 +43,19 @@ namespace AutomaticTextureReplacer
         private int m_FramesWithoutSpecialIndustryDefinitions;
         private readonly HashSet<OwnerDefinition> m_QueuedIndustryOwnerDefinitions = new HashSet<OwnerDefinition>();
         private System.Random m_Random;
+
+        public bool TryChooseSurfaceReplacement(Entity source, out Entity target)
+        {
+            target = Entity.Null;
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings ||
+                !string.Equals(Mod.Settings.RulesJson ?? "[]", m_CachedRulesJson, StringComparison.Ordinal) ||
+                !m_TargetsBySource.TryGetValue(source, out List<Entity> targets) || targets.Count == 0)
+            {
+                return false;
+            }
+            target = targets[m_Random.Next(targets.Count)];
+            return true;
+        }
 
         protected override void OnCreate()
         {
@@ -152,7 +165,6 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            int replaced = 0;
             bool sawSpecialIndustryDefinition = false;
             using (NativeArray<Entity> definitions = m_CreationDefinitionQuery.ToEntityArray(Allocator.Temp))
             {
@@ -292,26 +304,15 @@ namespace AutomaticTextureReplacer
                         continue;
                     }
 
-                    Entity source = definition.m_Prefab;
-                    Entity target = targets[m_Random.Next(targets.Count)];
-                    definition.m_Prefab = target;
-                    EntityManager.SetComponentData(definitionEntity, definition);
-                    SurfaceReplacementSystem.QueueConstructionBatchRefresh(source, target);
-                    replaced++;
-
+                    // Keep the source prefab until the area has been created.
+                    // SurfaceReplacementSystem handles the applied area itself.
+                    SurfaceReplacementSystem.QueueConstructionBatchRefresh(definition.m_Prefab, targets[m_Random.Next(targets.Count)], definition.m_Owner);
                     Mod.Log.InfoFormat(
-                        "New building surface replacement: definition={0}, owner={1}, source='{2}', target='{3}', candidates={4}",
+                        "Automatic construction replacement queued for post-creation swap: definition={0}, source='{1}', candidates={2}",
                         definitionEntity,
-                        definition.m_Owner,
-                        m_PrefabSystem.GetPrefabName(source),
-                        m_PrefabSystem.GetPrefabName(target),
+                        m_PrefabSystem.GetPrefabName(definition.m_Prefab),
                         targets.Count);
                 }
-            }
-
-            if (replaced > 0)
-            {
-                Mod.Log.InfoFormat("New building surface replacements applied before area creation: count={0}", replaced);
             }
 
             if (sawSpecialIndustryDefinition)

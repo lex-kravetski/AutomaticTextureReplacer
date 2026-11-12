@@ -107,12 +107,20 @@ namespace AutomaticTextureReplacer
         private readonly List<PendingRevertChange> m_PendingRevertChanges = new List<PendingRevertChange>();
         private readonly List<PendingConstructionBatchRefresh> m_PendingConstructionBatchRefreshes = new List<PendingConstructionBatchRefresh>();
         private readonly HashSet<Entity> m_ExpansionSuppressedAreas = new HashSet<Entity>();
+        private readonly Dictionary<Entity, Entity> m_ReplacementMaterialSources = new Dictionary<Entity, Entity>();
+        private readonly HashSet<Entity> m_LoggedConstructionGeometry = new HashSet<Entity>();
+        private readonly HashSet<Entity> m_ProcessedCreatedSurfaceAreas = new HashSet<Entity>();
+        private readonly HashSet<Entity> m_QueuedConstructionSurfaceAreas = new HashSet<Entity>();
+        private readonly Dictionary<Entity, UnityEngine.Material> m_AppliedReplacementMaterials = new Dictionary<Entity, UnityEngine.Material>();
+        private readonly Dictionary<Entity, Entity> m_AppliedReplacementMaterialSources = new Dictionary<Entity, Entity>();
         private readonly HashSet<Entity> m_IndustryAreasScheduledThisFrame = new HashSet<Entity>();
         private readonly Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot> m_SpecialIndustryPrefabSnapshots = new Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot>();
         private int m_ConstructionRefreshGeneration = -1;
 
         private EntityQuery m_SurfacePrefabQuery;
         private EntityQuery m_SurfaceAreaQuery;
+        private EntityQuery m_NewBuildingSurfaceQuery;
+        private EntityQuery m_TempConstructionSurfaceQuery;
         private EntityQuery m_ChangedSurfaceAreaQuery;
         private EntityQuery m_SpecialIndustryAreaQuery;
         private EntityQuery m_ChangedSpecialIndustryAreaQuery;
@@ -197,7 +205,7 @@ namespace AutomaticTextureReplacer
             Mod.Log.InfoFormat("Revert All request queued: areas={0}", areas);
         }
 
-        public static void QueueConstructionBatchRefresh(Entity sourcePrefab, Entity targetPrefab)
+        public static void QueueConstructionBatchRefresh(Entity sourcePrefab, Entity targetPrefab, Entity constructionOwner = default)
         {
             lock (s_RequestLock)
             {
@@ -210,6 +218,7 @@ namespace AutomaticTextureReplacer
                 {
                     SourcePrefab = sourcePrefab,
                     TargetPrefab = targetPrefab,
+                    ConstructionOwner = constructionOwner,
                     MatchIndustryType = false,
                 });
             }
@@ -324,6 +333,16 @@ namespace AutomaticTextureReplacer
                     ComponentType.ReadOnly<Deleted>(),
                 },
             });
+            m_NewBuildingSurfaceQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<PrefabRef>(), ComponentType.ReadOnly<Game.Areas.Surface>(), ComponentType.ReadOnly<Created>() },
+                None = new[] { ComponentType.ReadOnly<Temp>(), ComponentType.ReadOnly<Deleted>() },
+            });
+            m_TempConstructionSurfaceQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<PrefabRef>(), ComponentType.ReadOnly<Game.Areas.Surface>(), ComponentType.ReadOnly<Temp>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>() },
+            });
             m_ChangedSurfaceAreaQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -431,6 +450,15 @@ namespace AutomaticTextureReplacer
 
         protected override void OnUpdate()
         {
+            ProcessNewBuildingSurfaces();
+            // Copy the entries before iterating. Reapplying the material settings can
+            // discover/cache a replacement and add an entry to the dictionary, which
+            // must not mutate the collection being enumerated.
+            foreach (KeyValuePair<Entity, Entity> replacement in m_ReplacementMaterialSources.ToArray())
+            {
+                CopyReplacementEdgeMaterialSettings(replacement.Value, replacement.Key);
+            }
+
             foreach (Entity area in m_ExpansionSuppressedAreas.ToArray())
             {
                 ClearReplacementAreaExpansion(area);
@@ -472,6 +500,49 @@ namespace AutomaticTextureReplacer
             }
         }
 
+        private void ProcessNewBuildingSurfaces()
+        {
+            m_ProcessedCreatedSurfaceAreas.RemoveWhere(area =>
+                !EntityManager.Exists(area) || !EntityManager.HasComponent<Created>(area));
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings || m_NewBuildingSurfaceQuery.IsEmptyIgnoreFilter)
+                return;
+            NewBuildingSurfaceReplacementSystem rules = World.GetExistingSystemManaged<NewBuildingSurfaceReplacementSystem>();
+            if (rules == null) return;
+
+            using (NativeArray<Entity> areas = m_NewBuildingSurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                EntityCommandBuffer commands = m_ToolOutputBarrier.CreateCommandBuffer();
+                foreach (Entity area in areas)
+                {
+                    if (!m_ProcessedCreatedSurfaceAreas.Add(area))
+                        continue;
+                    Entity building = GetOwningBuildingEntity(area);
+                    Entity buildingPrefab = building != Entity.Null && EntityManager.HasComponent<PrefabRef>(building)
+                        ? EntityManager.GetComponentData<PrefabRef>(building).m_Prefab
+                        : Entity.Null;
+                    if (buildingPrefab == Entity.Null && EntityManager.HasComponent<OwnerDefinition>(area))
+                    {
+                        OwnerDefinition ownerDefinition = EntityManager.GetComponentData<OwnerDefinition>(area);
+                        if (ownerDefinition.m_Prefab != Entity.Null && EntityManager.HasComponent<BuildingData>(ownerDefinition.m_Prefab))
+                            buildingPrefab = ownerDefinition.m_Prefab;
+                    }
+                    if (buildingPrefab == Entity.Null || IsIndustryExtractionArea(area, FindSpecialIndustryOwner(area)))
+                        continue;
+                    Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                    if (!rules.TryChooseSurfaceReplacement(source, out Entity target))
+                        continue;
+
+                    LogSurfaceGeometry("construction-before", area, source);
+                    commands.SetComponent(area, new PrefabRef { m_Prefab = target });
+                    ClearReplacementAreaExpansion(area);
+                    CopyReplacementEdgeMaterialSettings(source, target);
+                    if (!EntityManager.HasComponent<Updated>(area)) commands.AddComponent<Updated>(area);
+                    QueueBatchDiagnostic(area, source, target, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(target));
+                    Mod.Log.InfoFormat("New building surface replacement scheduled after creation: area={0}, building={1}, source='{2}', target='{3}'", area, building, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(target));
+                }
+            }
+        }
+
         protected override void OnDestroy()
         {
             foreach (SpecialIndustryPrefabSnapshot snapshot in m_SpecialIndustryPrefabSnapshots.Values)
@@ -491,6 +562,8 @@ namespace AutomaticTextureReplacer
 
         private void ProcessPendingConstructionBatchRefreshes()
         {
+            m_QueuedConstructionSurfaceAreas.RemoveWhere(area =>
+                !EntityManager.Exists(area) || !EntityManager.HasComponent<Temp>(area));
             lock (s_RequestLock)
             {
                 foreach (PendingConstructionBatchRefresh request in s_ConstructionBatchRefreshRequests)
@@ -534,6 +607,11 @@ namespace AutomaticTextureReplacer
                 foreach (Entity area in changedAreas)
                 {
                     Entity currentPrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                    if (m_PendingConstructionBatchRefreshes.Any(request => !request.MatchIndustryType && request.TargetPrefab == currentPrefab) &&
+                        m_LoggedConstructionGeometry.Add(area))
+                    {
+                        LogSurfaceGeometry("construction", area, currentPrefab);
+                    }
                     foreach (PendingConstructionBatchRefresh request in m_PendingConstructionBatchRefreshes)
                     {
                         if (request.TargetPrefab != currentPrefab)
@@ -544,12 +622,91 @@ namespace AutomaticTextureReplacer
                         string sourceName = m_PrefabSystem.GetPrefabName(request.SourcePrefab);
                         string targetName = m_PrefabSystem.GetPrefabName(request.TargetPrefab);
                         QueueBatchDiagnostic(area, request.SourcePrefab, request.TargetPrefab, sourceName, targetName);
+                        // The construction path changes the prefab before the area
+                        // is created, so it does not pass through ProcessReplacement.
+                        // Apply the source edge settings here as well; otherwise a
+                        // mod surface can retain its larger edge expansion and spill
+                        // over adjacent roads.
+                        ClearReplacementAreaExpansion(area);
+                        CopyReplacementEdgeMaterialSettings(request.SourcePrefab, request.TargetPrefab);
                         request.SurfaceAreaObserved = true;
                     }
                 }
 
                 EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
                 bool hasSpecialFieldUpdates = false;
+
+                // Once the area exists, match it to the exact building that
+                // produced the CreationDefinition. This remains valid after the
+                // temporary creation tags have already been removed.
+                using (NativeArray<Entity> builtAreas = m_SurfaceAreaQuery.ToEntityArray(Allocator.Temp))
+                {
+                    foreach (Entity area in builtAreas)
+                    {
+                        if (!EntityManager.HasComponent<PrefabRef>(area))
+                            continue;
+                        Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                        Entity owner = GetOwningBuildingEntity(area);
+                        if (owner == Entity.Null)
+                            continue;
+                        foreach (PendingConstructionBatchRefresh request in m_PendingConstructionBatchRefreshes)
+                        {
+                            if (request.MatchIndustryType || request.SourcePrefab != source ||
+                                request.ConstructionOwner == Entity.Null || request.ConstructionOwner != owner ||
+                                !m_QueuedConstructionSurfaceAreas.Add(area))
+                                continue;
+
+                            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = request.TargetPrefab });
+                            ClearReplacementAreaExpansion(area);
+                            CopyReplacementEdgeMaterialSettings(source, request.TargetPrefab);
+                            if (!EntityManager.HasComponent<Updated>(area))
+                                commandBuffer.AddComponent<Updated>(area);
+                            QueueBatchDiagnostic(area, source, request.TargetPrefab,
+                                m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            request.SurfaceAreaObserved = true;
+                            Mod.Log.InfoFormat(
+                                "Automatic construction surface swapped by owner match: area={0}, owner={1}, source='{2}', target='{3}'",
+                                area, owner, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            break;
+                        }
+                    }
+                }
+
+                // Generate the area with its original prefab first. Swap only the
+                // new temporary area before ApplyAreasSystem makes it permanent.
+                if (!m_TempConstructionSurfaceQuery.IsEmptyIgnoreFilter)
+                {
+                    using NativeArray<Entity> tempAreas = m_TempConstructionSurfaceQuery.ToEntityArray(Allocator.Temp);
+                    Mod.Log.InfoFormat("Construction temporary surface scan: pending={0}, tempAreas={1}", m_PendingConstructionBatchRefreshes.Count, tempAreas.Length);
+                    foreach (Entity area in tempAreas)
+                    {
+                        Temp temp = EntityManager.GetComponentData<Temp>(area);
+                        if ((temp.m_Flags & (TempFlags.Delete | TempFlags.Hidden)) != 0)
+                            continue;
+                        Mod.Log.InfoFormat("Construction temporary surface candidate: area={0}, prefab='{1}', flags={2}", area, m_PrefabSystem.GetPrefabName(EntityManager.GetComponentData<PrefabRef>(area).m_Prefab), temp.m_Flags);
+                        if ((temp.m_Flags & TempFlags.Create) == 0)
+                            continue;
+                        Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                        foreach (PendingConstructionBatchRefresh request in m_PendingConstructionBatchRefreshes)
+                        {
+                            if (request.MatchIndustryType || request.SourcePrefab != source ||
+                                !m_QueuedConstructionSurfaceAreas.Add(area))
+                                continue;
+
+                            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = request.TargetPrefab });
+                            ClearReplacementAreaExpansion(area);
+                            CopyReplacementEdgeMaterialSettings(source, request.TargetPrefab);
+                            if (!EntityManager.HasComponent<Updated>(area)) commandBuffer.AddComponent<Updated>(area);
+                            QueueBatchDiagnostic(area, source, request.TargetPrefab,
+                                m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            request.SurfaceAreaObserved = true;
+                            Mod.Log.InfoFormat(
+                                "Automatic construction surface swapped after area creation: area={0}, source='{1}', target='{2}'",
+                                area, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            break;
+                        }
+                    }
+                }
 
                 // Forestry and any other extractor with its render batch on the
                 // root lot may have no SubArea buffer at all. Detect its creation
@@ -1106,6 +1263,9 @@ namespace AutomaticTextureReplacer
             ResetConstructionBatchRefreshes();
             m_PendingConstructionBatchRefreshes.Clear();
             m_ExpansionSuppressedAreas.Clear();
+            m_ReplacementMaterialSources.Clear();
+            m_AppliedReplacementMaterials.Clear();
+            m_AppliedReplacementMaterialSources.Clear();
             Mod.Log.Info("Pending automatic construction surface replacements cancelled for Revert All");
 
             int scanned = 0;
@@ -1256,7 +1416,16 @@ namespace AutomaticTextureReplacer
 
         private void ClearReplacementAreaExpansion(Entity area)
         {
-            if (area == Entity.Null || !EntityManager.Exists(area) || !EntityManager.HasBuffer<Game.Areas.Expand>(area))
+            if (area == Entity.Null || !EntityManager.Exists(area))
+            {
+                return;
+            }
+
+            // Newly created areas can receive their Expand buffer after the
+            // replacement is observed. Keep tracking the area so a later frame
+            // clears the buffer as soon as the game creates it.
+            m_ExpansionSuppressedAreas.Add(area);
+            if (!EntityManager.HasBuffer<Game.Areas.Expand>(area))
             {
                 return;
             }
@@ -1266,7 +1435,6 @@ namespace AutomaticTextureReplacer
             {
                 expands[i] = default(Game.Areas.Expand);
             }
-            m_ExpansionSuppressedAreas.Add(area);
         }
 
         private void CopyReplacementEdgeMaterialSettings(Entity sourcePrefab, Entity targetPrefab)
@@ -1279,9 +1447,24 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
+            m_ReplacementMaterialSources[targetPrefab] = sourcePrefab;
+
+            int sourceBatchIndex = EntityManager.HasComponent<RenderedAreaData>(sourcePrefab)
+                ? EntityManager.GetComponentData<RenderedAreaData>(sourcePrefab).m_BatchIndex
+                : -1;
             int batchIndex = EntityManager.GetComponentData<RenderedAreaData>(targetPrefab).m_BatchIndex;
             if (!m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out UnityEngine.Material material, out _, out _, out _) ||
                 material == null)
+            {
+                return;
+            }
+
+            // A material is normally rebuilt only when its batch changes. Do not
+            // rewrite it (and do not log) on every simulation frame.
+            if (m_AppliedReplacementMaterials.TryGetValue(targetPrefab, out UnityEngine.Material appliedMaterial) &&
+                ReferenceEquals(appliedMaterial, material) &&
+                m_AppliedReplacementMaterialSources.TryGetValue(targetPrefab, out Entity appliedSource) &&
+                appliedSource == sourcePrefab)
             {
                 return;
             }
@@ -1290,6 +1473,18 @@ namespace AutomaticTextureReplacer
             material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeFadeRange"), new UnityEngine.Vector4(sourceRendered.m_EdgeFadeRange.x, sourceRendered.m_EdgeFadeRange.y, 0f, 0f));
             material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeNormalRange"), new UnityEngine.Vector4(sourceRendered.m_EdgeNormalRange.x, sourceRendered.m_EdgeNormalRange.y, 0f, 0f));
             material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeNoise"), new UnityEngine.Vector4(sourceRendered.m_EdgeNoise.x, sourceRendered.m_EdgeNoise.y, 0f, 0f));
+            if (sourceBatchIndex >= 0 &&
+                m_AreaBatchSystem.GetAreaBatch(sourceBatchIndex, out _, out _, out _, out UnityEngine.Material sourceMaterial, out _, out _, out _) &&
+                sourceMaterial != null)
+            {
+                int areaParameters = UnityEngine.Shader.PropertyToID("colossal_AreaParameters");
+                if (sourceMaterial.HasProperty(areaParameters))
+                {
+                    material.SetVector(areaParameters, sourceMaterial.GetVector(areaParameters));
+                }
+            }
+            m_AppliedReplacementMaterials[targetPrefab] = material;
+            m_AppliedReplacementMaterialSources[targetPrefab] = sourcePrefab;
             Mod.Log.InfoFormat(
                 "Copied source surface edge material settings: source='{0}', target='{1}', batch={2}, edgeNormal={3}, fade={4}/{5}",
                 m_PrefabSystem.GetPrefabName(sourcePrefab),
@@ -1833,6 +2028,7 @@ namespace AutomaticTextureReplacer
                     }
 
                     Entity replacement = targets[random.Next(targets.Count)];
+                    LogSurfaceGeometry("button-before", areaEntity, prefabRef.m_Prefab);
                     Entity ownerEntity = EntityManager.HasComponent<Owner>(areaEntity)
                         ? EntityManager.GetComponentData<Owner>(areaEntity).m_Owner
                         : Entity.Null;
@@ -2130,6 +2326,30 @@ namespace AutomaticTextureReplacer
             }
         }
 
+        private void LogSurfaceGeometry(string path, Entity area, Entity prefab)
+        {
+            Entity building = GetOwningBuildingEntity(area);
+            string nodes = "<none>";
+            string offsets = "<none>";
+            if (EntityManager.HasBuffer<Game.Areas.Node>(area))
+            {
+                DynamicBuffer<Game.Areas.Node> buffer = EntityManager.GetBuffer<Game.Areas.Node>(area, true);
+                nodes = string.Join("; ", Enumerable.Range(0, buffer.Length).Select(i => buffer[i].m_Position.ToString()));
+            }
+            if (EntityManager.HasBuffer<Game.Areas.Expand>(area))
+            {
+                DynamicBuffer<Game.Areas.Expand> buffer = EntityManager.GetBuffer<Game.Areas.Expand>(area, true);
+                offsets = string.Join("; ", Enumerable.Range(0, buffer.Length).Select(i => buffer[i].m_Offset.ToString()));
+            }
+            using (NativeArray<ComponentType> components = EntityManager.GetComponentTypes(area, Allocator.Temp))
+            {
+                Mod.Log.InfoFormat(
+                    "Surface geometry comparison: path={0}, area={1}, building={2}, asset='{3}', prefab='{4}', components=[{5}], nodes=[{6}], expansionOffsets=[{7}]",
+                    path, area, building, GetAssetName(building), m_PrefabSystem.GetPrefabName(prefab),
+                    string.Join(", ", components.ToArray().Select(component => component.ToString())), nodes, offsets);
+            }
+        }
+
         private void QueueBatchDiagnostic(Entity areaEntity, Entity sourcePrefab, Entity targetPrefab, string sourceName, string targetName)
         {
             int expectedBatchIndex = EntityManager.HasComponent<RenderedAreaData>(targetPrefab)
@@ -2141,6 +2361,15 @@ namespace AutomaticTextureReplacer
             int sourceBatchIndex = EntityManager.HasComponent<RenderedAreaData>(sourcePrefab)
                 ? EntityManager.GetComponentData<RenderedAreaData>(sourcePrefab).m_BatchIndex
                 : -1;
+            float sourceExpandAmount = EntityManager.HasComponent<RenderedAreaData>(sourcePrefab)
+                ? EntityManager.GetComponentData<RenderedAreaData>(sourcePrefab).m_ExpandAmount
+                : -1f;
+            float targetExpandAmount = EntityManager.HasComponent<RenderedAreaData>(targetPrefab)
+                ? EntityManager.GetComponentData<RenderedAreaData>(targetPrefab).m_ExpandAmount
+                : -1f;
+            int expandCount = EntityManager.HasBuffer<Game.Areas.Expand>(areaEntity)
+                ? EntityManager.GetBuffer<Game.Areas.Expand>(areaEntity, true).Length
+                : 0;
             if (m_PendingBatchDiagnostics.Any(diagnostic =>
                     diagnostic.Area == areaEntity &&
                     diagnostic.ExpectedPrefab == targetPrefab &&
@@ -2160,13 +2389,16 @@ namespace AutomaticTextureReplacer
                 TargetName = targetName,
             });
             Mod.Log.InfoFormat(
-                "Area batch diagnostic queued: area={0}, source='{1}', sourcePrefabBatch={2}, target='{3}', targetPrefabBatch={4}, previousAreaBatch={5}",
+                "Area batch diagnostic queued: area={0}, source='{1}', sourcePrefabBatch={2}, sourceExpand={3}, target='{4}', targetPrefabBatch={5}, targetExpand={6}, previousAreaBatch={7}, expandCount={8}",
                 areaEntity,
                 sourceName,
                 sourceBatchIndex,
+                sourceExpandAmount,
                 targetName,
                 expectedBatchIndex,
-                previousBatchIndex);
+                targetExpandAmount,
+                previousBatchIndex,
+                expandCount);
         }
 
         private void LogPendingBatchDiagnostics()

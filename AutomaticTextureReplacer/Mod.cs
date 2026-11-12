@@ -5,6 +5,7 @@ using Colossal.IO.AssetDatabase;
 using Colossal.Logging;
 using Colossal.UI;
 using Game.Tools;
+using Game.Common;
 using System;
 using System.IO;
 using System.Reflection;
