@@ -1319,11 +1319,7 @@ namespace AutomaticTextureReplacer
 
                         string previousName = m_PrefabSystem.GetPrefabName(currentRef.m_Prefab);
                         string defaultName = m_PrefabSystem.GetPrefabName(defaultPrefab);
-                        commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = defaultPrefab });
-                        if (!EntityManager.HasComponent<Updated>(area))
-                        {
-                            commandBuffer.AddComponent<Updated>(area);
-                        }
+                        ApplySurfacePrefabRevert(area, defaultPrefab, commandBuffer);
                         m_PendingRevertChanges.Add(new PendingRevertChange
                         {
                             Area = area,
@@ -1349,21 +1345,10 @@ namespace AutomaticTextureReplacer
                     {
                         if (EntityManager.HasComponent<SpecialIndustrySurfaceOverlayState>(area))
                         {
-                            SpecialIndustrySurfaceOverlayState overlayState = EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(area);
-                            Entity overlay = FindIndustrySurfaceOverlay(area, overlayState.TargetSurfacePrefab);
-                            if (overlay != Entity.Null)
+                            if (QueueIndustrySurfaceOverlayRevert(area, commandBuffer))
                             {
-                                commandBuffer.AddComponent<Deleted>(overlay);
+                                changed++;
                             }
-                            commandBuffer.RemoveComponent<SpecialIndustrySurfaceOverlayState>(area);
-                            Mod.Log.InfoFormat(
-                                "Special-industry surface overlay reverted: root={0}, overlay={1}, target='{2}'",
-                                area,
-                                overlay,
-                                overlayState.TargetSurfacePrefab != Entity.Null
-                                    ? m_PrefabSystem.GetPrefabName(overlayState.TargetSurfacePrefab)
-                                    : "<none>");
-                            changed++;
                             continue;
                         }
 
@@ -1380,18 +1365,7 @@ namespace AutomaticTextureReplacer
                             continue;
                         }
 
-                        commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = originalPrefab });
-                        commandBuffer.RemoveComponent<SpecialIndustryLotReplacement>(area);
-                        if (!EntityManager.HasComponent<Updated>(area))
-                        {
-                            commandBuffer.AddComponent<Updated>(area);
-                        }
-                        QueueBatchDiagnostic(
-                            area,
-                            currentPrefab,
-                            originalPrefab,
-                            m_PrefabSystem.GetPrefabName(currentPrefab),
-                            m_PrefabSystem.GetPrefabName(originalPrefab));
+                        ApplySurfacePrefabRevert(area, originalPrefab, commandBuffer, removeSpecialIndustryMarker: true);
                         m_PendingRevertChanges.Add(new PendingRevertChange
                         {
                             Area = area,
@@ -1492,6 +1466,66 @@ namespace AutomaticTextureReplacer
             ClearReplacementAreaExpansion(area);
             CopyReplacementEdgeMaterialSettings(sourcePrefab, targetPrefab);
             QueueBatchDiagnostic(area, sourcePrefab, targetPrefab, sourceName, targetName);
+        }
+
+        private bool ApplySurfacePrefabRevert(
+            Entity area,
+            Entity originalPrefab,
+            EntityCommandBuffer commandBuffer,
+            bool removeSpecialIndustryMarker = false)
+        {
+            if (area == Entity.Null || originalPrefab == Entity.Null || !EntityManager.Exists(area) ||
+                !EntityManager.HasComponent<PrefabRef>(area))
+            {
+                return false;
+            }
+
+            Entity currentPrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+            if (currentPrefab == originalPrefab)
+            {
+                return false;
+            }
+
+            PrepareSurfaceReplacement(
+                area,
+                currentPrefab,
+                originalPrefab,
+                m_PrefabSystem.GetPrefabName(currentPrefab),
+                m_PrefabSystem.GetPrefabName(originalPrefab));
+            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = originalPrefab });
+            if (removeSpecialIndustryMarker && EntityManager.HasComponent<SpecialIndustryLotReplacement>(area))
+            {
+                commandBuffer.RemoveComponent<SpecialIndustryLotReplacement>(area);
+            }
+            if (!EntityManager.HasComponent<Updated>(area))
+            {
+                commandBuffer.AddComponent<Updated>(area);
+            }
+            return true;
+        }
+
+        private bool QueueIndustrySurfaceOverlayRevert(Entity industryRoot, EntityCommandBuffer commandBuffer)
+        {
+            if (industryRoot == Entity.Null || !EntityManager.HasComponent<SpecialIndustrySurfaceOverlayState>(industryRoot))
+            {
+                return false;
+            }
+
+            SpecialIndustrySurfaceOverlayState overlayState = EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(industryRoot);
+            Entity overlay = FindIndustrySurfaceOverlay(industryRoot, overlayState.TargetSurfacePrefab);
+            if (overlay != Entity.Null && !EntityManager.HasComponent<Deleted>(overlay))
+            {
+                commandBuffer.AddComponent<Deleted>(overlay);
+            }
+            commandBuffer.RemoveComponent<SpecialIndustrySurfaceOverlayState>(industryRoot);
+            Mod.Log.InfoFormat(
+                "Special-industry surface overlay reverted: root={0}, overlay={1}, target='{2}'",
+                industryRoot,
+                overlay,
+                overlayState.TargetSurfacePrefab != Entity.Null
+                    ? m_PrefabSystem.GetPrefabName(overlayState.TargetSurfacePrefab)
+                    : "<none>");
+            return true;
         }
 
         private void ClearReplacementAreaExpansion(Entity area)
