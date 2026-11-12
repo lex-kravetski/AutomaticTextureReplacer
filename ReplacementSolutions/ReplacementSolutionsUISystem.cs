@@ -414,7 +414,9 @@ namespace AutomaticTextureReplacer
             StartAreaCatalogBuild(prefabSystem);
             List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<Entity, string> surfaceMenuPaths = GetSurfaceMenuPaths(prefabSystem);
             int modSurfaceCount = 0;
+            int surfacesWithoutMenuSkipped = 0;
             bool anarchyEnabled = IsAnarchyEnabled();
             bool shouldSuppressTrees = !anarchyEnabled;
             int surfacesWithTreeSuppression = 0;
@@ -455,9 +457,20 @@ namespace AutomaticTextureReplacer
                     {
                         name = ReplacementRuleCatalog.TransparentSurfaceDisplayName;
                     }
-                    string group = isTransparentSurface ? "In-game" : GetSurfaceGroup(prefab);
-                    string menuPath = isTransparentSurface ? "In-game / Transparent Surface" : GetSurfaceMenuPath(prefab);
                     bool isMod = !prefab.isBuiltin && IsOwnedByMod(prefab);
+                    string assetIcon = isTransparentSurface ? null : GetAssetIcon(prefab);
+                    string menuPath = isTransparentSurface
+                        ? "In-game / Transparent Surface"
+                        : surfaceMenuPaths.TryGetValue(entity, out string registeredMenuPath)
+                            ? registeredMenuPath
+                            : GetSurfaceMenuPath(prefab);
+                    if (!isTransparentSurface && string.Equals(menuPath, "In-game asset", StringComparison.Ordinal))
+                    {
+                        surfacesWithoutMenuSkipped++;
+                        continue;
+                    }
+
+                    string group = isTransparentSurface ? "In-game" : GetSurfaceGroup(prefab, menuPath);
                     if (isMod)
                     {
                         modSurfaceCount++;
@@ -480,10 +493,10 @@ namespace AutomaticTextureReplacer
                         ["name"] = name,
                         ["thumbnail"] = isTransparentSurface
                             ? "coui://replacementsolutions/images/TransparentSurface.svg"
-                            : GetSurfaceThumbnail(prefab),
+                            : GetSurfaceThumbnail(prefab, assetIcon),
                         ["tooltipThumbnail"] = isTransparentSurface
                             ? "coui://replacementsolutions/images/TransparentSurface.svg"
-                            : GetLargeThumbnail(prefab),
+                            : GetLargeThumbnail(prefab, assetIcon),
                         ["group"] = group,
                         ["menuPath"] = menuPath,
                         ["isMod"] = isMod.ToString(),
@@ -492,9 +505,11 @@ namespace AutomaticTextureReplacer
             }
 
             Mod.Log.InfoFormat(
-                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, queriedPrefabs={2}, treeSuppressionFlagsAdded={3}, anarchyEnabled={4}",
+                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, menuRegisteredSurfaces={2}, surfacesWithoutMenuSkipped={3}, queriedPrefabs={4}, treeSuppressionFlagsAdded={5}, anarchyEnabled={6}",
                 catalog.Count,
                 modSurfaceCount,
+                surfaceMenuPaths.Count,
+                surfacesWithoutMenuSkipped,
                 m_SurfaceQuery.CalculateEntityCount(),
                 surfacesWithTreeSuppression,
                 !shouldSuppressTrees);            m_SurfaceCatalogSurfaceCount = catalog.Count;
@@ -861,10 +876,9 @@ namespace AutomaticTextureReplacer
                    string.Equals(name, "Missing Area", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static string GetSurfaceGroup(SurfacePrefab prefab)
+        private static string GetSurfaceGroup(SurfacePrefab prefab, string menuPath)
         {
             string name = prefab.name ?? string.Empty;
-            string menuPath = GetSurfaceMenuPath(prefab);
             if (ContainsSpecialIndustry(name) || ContainsSpecialIndustry(menuPath))
             {
                 return "Special Industries";
@@ -933,7 +947,7 @@ namespace AutomaticTextureReplacer
 
         private static string GetSurfaceMenuPath(SurfacePrefab prefab)
         {
-            if (prefab.TryGet<UIObject>(out UIObject uiObject) && uiObject?.m_Group != null)
+            if (prefab != null && prefab.TryGet<UIObject>(out UIObject uiObject) && uiObject?.m_Group != null)
             {
                 if (uiObject.m_Group is UIAssetCategoryPrefab category && category.m_Menu != null)
                 {
@@ -946,9 +960,74 @@ namespace AutomaticTextureReplacer
             return "In-game asset";
         }
 
-        private static string GetLargeThumbnail(SurfacePrefab prefab)
+        private Dictionary<Entity, string> GetSurfaceMenuPaths(PrefabSystem prefabSystem)
         {
-            string icon = GetAssetIcon(prefab);
+            Dictionary<Entity, string> menuPaths = new Dictionary<Entity, string>();
+            EntityManager entityManager = prefabSystem.World.EntityManager;
+            using (EntityQuery query = entityManager.CreateEntityQuery(
+                       ComponentType.ReadOnly<PrefabData>(),
+                       ComponentType.ReadOnly<UIAssetMenuData>(),
+                       ComponentType.ReadOnly<UIGroupElement>()))
+            using (NativeArray<Entity> menus = query.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity menuEntity in menus)
+                {
+                    if (!prefabSystem.TryGetPrefab<UIAssetMenuPrefab>(menuEntity, out UIAssetMenuPrefab menu) || menu == null)
+                    {
+                        continue;
+                    }
+
+                    DynamicBuffer<UIGroupElement> categories = entityManager.GetBuffer<UIGroupElement>(menuEntity, true);
+                    foreach (UIGroupElement categoryEntry in categories)
+                    {
+                        if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryEntry.m_Prefab, out UIAssetCategoryPrefab category) ||
+                            category == null)
+                        {
+                            continue;
+                        }
+
+                        DynamicBuffer<UIGroupElement> menuEntries = entityManager.GetBuffer<UIGroupElement>(categoryEntry.m_Prefab, true);
+                        string path = menu.name + " / " + category.name;
+                        foreach (UIGroupElement menuEntry in menuEntries)
+                        {
+                            if (prefabSystem.TryGetPrefab<SurfacePrefab>(menuEntry.m_Prefab, out SurfacePrefab surface) && surface != null)
+                            {
+                                menuPaths[menuEntry.m_Prefab] = path;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Some built-in surfaces have a registered UIObjectData group even
+            // when a category buffer does not list them directly. Resolve that
+            // group through the same category-to-menu relationship used by the
+            // asset browser.
+            using (NativeArray<Entity> surfaces = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity surfaceEntity in surfaces)
+                {
+                    if (!entityManager.HasComponent<UIObjectData>(surfaceEntity))
+                    {
+                        continue;
+                    }
+
+                    Entity groupEntity = entityManager.GetComponentData<UIObjectData>(surfaceEntity).m_Group;
+                    if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(groupEntity, out UIAssetCategoryPrefab category) ||
+                        category == null || category.m_Menu == null)
+                    {
+                        continue;
+                    }
+
+                    menuPaths[surfaceEntity] = category.m_Menu.name + " / " + category.name;
+                }
+            }
+
+            return menuPaths;
+        }
+
+        private static string GetLargeThumbnail(SurfacePrefab prefab, string icon)
+        {
             if (!string.IsNullOrWhiteSpace(icon))
             {
                 return icon;
@@ -961,9 +1040,9 @@ namespace AutomaticTextureReplacer
                 : prefab.thumbnailUrl + "?width=512&height=512";
         }
 
-        private static string GetSurfaceThumbnail(SurfacePrefab prefab)
+        private static string GetSurfaceThumbnail(SurfacePrefab prefab, string icon)
         {
-            return GetAssetIcon(prefab) ?? ImageSystem.GetThumbnail(prefab) ?? "Media/Placeholder.svg";
+            return icon ?? ImageSystem.GetThumbnail(prefab) ?? "Media/Placeholder.svg";
         }
 
         private static string GetAssetIcon(SurfacePrefab prefab)

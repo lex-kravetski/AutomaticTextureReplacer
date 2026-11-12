@@ -311,9 +311,13 @@ const register = (moduleRegistry) => {
     }, [open, pickerContext, collapsedGroupsJson]);
 
     const initialWidth = savedWidth < 0 ? Math.round(window.innerWidth * 0.5) : savedWidth;
-    const initialHeight = savedHeight < 0 ? window.innerHeight : savedHeight;
+    const defaultTopMargin = Math.round(window.innerHeight * 0.05);
+    const defaultBottomMargin = Math.round(window.innerHeight * 0.15);
+    const initialHeight = savedHeight < 0
+      ? window.innerHeight - defaultTopMargin - defaultBottomMargin
+      : savedHeight;
     const initialX = savedX < 0 ? 0 : savedX;
-    const initialY = savedY < 0 ? 0 : savedY;
+    const initialY = savedY < 0 ? defaultTopMargin : savedY;
     const position = dragPosition || { x: initialX, y: initialY };
     const dimensions = size || { width: initialWidth, height: initialHeight };
 
@@ -655,11 +659,13 @@ const register = (moduleRegistry) => {
 
     const minimumDialogWidth = Math.round(760 * fontSize / 100);
     const defaultWidth = Math.round(window.innerWidth * 0.5);
-    const defaultHeight = window.innerHeight;
+    const defaultTopMargin = Math.round(window.innerHeight * 0.05);
+    const defaultBottomMargin = Math.round(window.innerHeight * 0.15);
+    const defaultHeight = window.innerHeight - defaultTopMargin - defaultBottomMargin;
     const initialWidth = Math.max(minimumDialogWidth, savedWidth < 0 ? defaultWidth : savedWidth);
     const initialHeight = savedHeight < 0 ? defaultHeight : savedHeight;
     const initialX = savedX < 0 ? Math.round(window.innerWidth - initialWidth) : savedX;
-    const initialY = savedY < 0 ? 0 : savedY;
+    const initialY = savedY < 0 ? defaultTopMargin : savedY;
     const position = dragPosition || { x: initialX, y: initialY };
     const dimensions = { width: Math.max(minimumDialogWidth, size?.width ?? initialWidth), height: size?.height ?? initialHeight };
 
