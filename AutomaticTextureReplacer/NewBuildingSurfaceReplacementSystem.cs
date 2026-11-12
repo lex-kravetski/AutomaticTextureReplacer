@@ -240,6 +240,43 @@ namespace AutomaticTextureReplacer
                             industryPrefab = m_LastSpecialIndustryPrefab;
                         }
 
+                        // Some extractor definitions arrive without an owner and
+                        // before the active menu prefab is available. Resolve the
+                        // industry type by its map feature, which is the stable
+                        // identity shared by all lots of that industry.
+                        if (industryPrefab == Entity.Null &&
+                            EntityManager.HasComponent<ExtractorAreaData>(definition.m_Prefab))
+                        {
+                            ExtractorAreaData definitionArea = EntityManager.GetComponentData<ExtractorAreaData>(definition.m_Prefab);
+                            foreach (Entity candidate in m_TargetsByIndustryType.Keys)
+                            {
+                                if (EntityManager.HasComponent<ExtractorAreaData>(candidate) &&
+                                    EntityManager.GetComponentData<ExtractorAreaData>(candidate).m_MapFeature == definitionArea.m_MapFeature)
+                                {
+                                    industryPrefab = candidate;
+                                    Mod.Log.InfoFormat(
+                                        "Resolved ownerless extractor definition by map feature: lot='{0}', mapFeature={1}, industryPrefab='{2}'",
+                                        m_PrefabSystem.GetPrefabName(definition.m_Prefab),
+                                        definitionArea.m_MapFeature,
+                                        m_PrefabSystem.GetPrefabName(industryPrefab));
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!hasOwnerDefinition && industryPrefab != Entity.Null &&
+                            m_HasLastSpecialIndustryOwnerDefinition &&
+                            m_LastSpecialIndustryOwnerDefinition.m_Prefab == industryPrefab)
+                        {
+                            ownerDefinition = m_LastSpecialIndustryOwnerDefinition;
+                            hasOwnerDefinition = true;
+                            Mod.Log.InfoFormat(
+                                "Reused current special-industry placement for ownerless extractor definition: lot='{0}', industryPrefab='{1}', position={2}",
+                                m_PrefabSystem.GetPrefabName(definition.m_Prefab),
+                                m_PrefabSystem.GetPrefabName(industryPrefab),
+                                ownerDefinition.m_Position);
+                        }
+
                         if (industryPrefab != Entity.Null && m_TargetsByIndustryType.TryGetValue(industryPrefab, out List<Entity> areaTargets) &&
                             areaTargets.Count > 0)
                         {
