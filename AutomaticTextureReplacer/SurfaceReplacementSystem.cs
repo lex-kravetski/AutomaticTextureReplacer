@@ -1062,14 +1062,14 @@ namespace AutomaticTextureReplacer
 
                         if (!MatchesIndustryConstructionRequest(request, industryArea) || IsUsingSpecialIndustryTarget(fieldArea, request.TargetPrefab)) continue;
                         if (!m_IndustryAreasScheduledThisFrame.Add(fieldArea)) continue;
-                        var marker = new SpecialIndustryLotReplacement { OriginalPrefab = fieldPrefab, TargetSurfacePrefab = request.TargetPrefab };
-                        if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(fieldArea)) commandBuffer.SetComponent(fieldArea, marker);
-                        else commandBuffer.AddComponent(fieldArea, marker);
-                        commandBuffer.SetComponent(fieldArea, new PrefabRef { m_Prefab = request.TargetPrefab });
-                        ClearReplacementAreaExpansion(fieldArea);
-                        CopyReplacementEdgeMaterialSettings(fieldPrefab, request.TargetPrefab);
-                        if (!EntityManager.HasComponent<Updated>(fieldArea)) commandBuffer.AddComponent<Updated>(fieldArea);
-                        QueueBatchDiagnostic(fieldArea, fieldPrefab, request.TargetPrefab, m_PrefabSystem.GetPrefabName(fieldPrefab), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                        ApplySurfacePrefabReplacement(
+                            fieldArea,
+                            fieldPrefab,
+                            request.TargetPrefab,
+                            commandBuffer,
+                            m_PrefabSystem.GetPrefabName(fieldPrefab),
+                            m_PrefabSystem.GetPrefabName(request.TargetPrefab),
+                            fieldPrefab);
                         request.SpecialIndustryFieldObserved = true;
                         replacements++;
                         break;
