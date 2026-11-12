@@ -137,7 +137,10 @@ namespace AutomaticTextureReplacer
         private readonly Dictionary<Entity, UnityEngine.Material> m_AppliedReplacementMaterials = new Dictionary<Entity, UnityEngine.Material>();
         private readonly Dictionary<Entity, Entity> m_AppliedReplacementMaterialSources = new Dictionary<Entity, Entity>();
         private readonly HashSet<Entity> m_IndustryAreasScheduledThisFrame = new HashSet<Entity>();
+        private readonly HashSet<Entity> m_IndustryAreasRevertedThisFrame = new HashSet<Entity>();
+        private readonly HashSet<Entity> m_IndustryPrefabsWithoutInitialSubArea = new HashSet<Entity>();
         private readonly Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot> m_SpecialIndustryPrefabSnapshots = new Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot>();
+        private readonly Dictionary<Entity, PrefabBase> m_TransparentIndustryPrefabClones = new Dictionary<Entity, PrefabBase>();
         private int m_ConstructionRefreshGeneration = -1;
 
         private EntityQuery m_SurfacePrefabQuery;
@@ -150,6 +153,7 @@ namespace AutomaticTextureReplacer
         private EntityQuery m_ChangedSpecialIndustryAreaQuery;
         private EntityQuery m_ChangedSpecialIndustryRootAreaQuery;
         private EntityQuery m_ChangedIndustrySurfaceOverlayQuery;
+        private EntityQuery m_DeferredIndustryRootCloneQuery;
         private EntityQuery m_CreatedSpecialIndustryFieldQuery;
         private EntityQuery m_AreaBatchEntityQuery;
         private PrefabSystem m_PrefabSystem;
@@ -451,6 +455,23 @@ namespace AutomaticTextureReplacer
                 ComponentType.ReadOnly<Game.Areas.SubArea>(),
                 ComponentType.ReadOnly<Game.Areas.Node>(),
             });
+            m_DeferredIndustryRootCloneQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<PrefabRef>(),
+                    ComponentType.ReadOnly<Game.Areas.Lot>(),
+                    ComponentType.ReadOnly<Game.Areas.SubArea>(),
+                    ComponentType.ReadOnly<SpecialIndustrySurfaceOverlayState>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                    ComponentType.ReadOnly<Created>(),
+                    ComponentType.ReadOnly<SpecialIndustryLotReplacement>(),
+                },
+            });
             m_CreatedSpecialIndustryFieldQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -490,6 +511,7 @@ namespace AutomaticTextureReplacer
             }
 
             m_IndustryAreasScheduledThisFrame.Clear();
+            m_IndustryAreasRevertedThisFrame.Clear();
             int generation;
             lock (s_RequestLock)
             {
@@ -521,6 +543,48 @@ namespace AutomaticTextureReplacer
                 else
                 {
                     ProcessReplacement(request);
+                }
+            }
+            ProcessDeferredIndustryRootClones();
+        }
+
+        private void ProcessDeferredIndustryRootClones()
+        {
+            // Forestry lots initially have no SubArea. Their overlay must finish
+            // creation before changing the root PrefabRef; doing both in one
+            // command-buffer playback can crash the area's creation systems.
+            EntityCommandBuffer commandBuffer = default(EntityCommandBuffer);
+            using (NativeArray<Entity> roots = m_DeferredIndustryRootCloneQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity root in roots)
+                {
+                    if (m_IndustryAreasScheduledThisFrame.Contains(root) ||
+                        m_IndustryAreasRevertedThisFrame.Contains(root))
+                    {
+                        continue;
+                    }
+
+                    SpecialIndustrySurfaceOverlayState state =
+                        EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(root);
+                    Entity overlay = FindIndustrySurfaceOverlay(root, state.TargetSurfacePrefab);
+                    if (overlay == Entity.Null || EntityManager.HasComponent<Created>(overlay) ||
+                        state.OriginalIndustryPrefab == Entity.Null ||
+                        !EntityManager.HasComponent<RenderedAreaData>(state.OriginalIndustryPrefab))
+                    {
+                        continue;
+                    }
+
+                    if (!commandBuffer.IsCreated)
+                    {
+                        commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+                    }
+                    if (TryUseTransparentIndustryPrefabClone(root, state.OriginalIndustryPrefab,
+                            commandBuffer, ++m_NextOperationId, out Entity cloneEntity))
+                    {
+                        QueueBatchDiagnostic(root, state.OriginalIndustryPrefab, cloneEntity,
+                            m_PrefabSystem.GetPrefabName(state.OriginalIndustryPrefab),
+                            m_PrefabSystem.GetPrefabName(cloneEntity));
+                    }
                 }
             }
         }
@@ -702,7 +766,6 @@ namespace AutomaticTextureReplacer
                 if (!m_TempConstructionSurfaceQuery.IsEmptyIgnoreFilter)
                 {
                     using NativeArray<Entity> tempAreas = m_TempConstructionSurfaceQuery.ToEntityArray(Allocator.Temp);
-                    Mod.Log.InfoFormat("Construction temporary surface scan: pending={0}, tempAreas={1}", m_PendingConstructionBatchRefreshes.Count, tempAreas.Length);
                     foreach (Entity area in tempAreas)
                     {
                         Temp temp = EntityManager.GetComponentData<Temp>(area);
@@ -1511,11 +1574,36 @@ namespace AutomaticTextureReplacer
                 return false;
             }
 
+            m_IndustryAreasRevertedThisFrame.Add(industryRoot);
             SpecialIndustrySurfaceOverlayState overlayState = EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(industryRoot);
             Entity overlay = FindIndustrySurfaceOverlay(industryRoot, overlayState.TargetSurfacePrefab);
             if (overlay != Entity.Null && !EntityManager.HasComponent<Deleted>(overlay))
             {
                 commandBuffer.AddComponent<Deleted>(overlay);
+            }
+            if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(industryRoot) &&
+                EntityManager.HasComponent<PrefabRef>(industryRoot))
+            {
+                SpecialIndustryLotReplacement replacement = EntityManager.GetComponentData<SpecialIndustryLotReplacement>(industryRoot);
+                if (replacement.OriginalPrefab != Entity.Null)
+                {
+                    Entity currentPrefab = EntityManager.GetComponentData<PrefabRef>(industryRoot).m_Prefab;
+                    if (currentPrefab != replacement.OriginalPrefab)
+                    {
+                        QueueBatchDiagnostic(
+                            industryRoot,
+                            currentPrefab,
+                            replacement.OriginalPrefab,
+                            m_PrefabSystem.GetPrefabName(currentPrefab),
+                            m_PrefabSystem.GetPrefabName(replacement.OriginalPrefab));
+                    }
+                    commandBuffer.SetComponent(industryRoot, new PrefabRef { m_Prefab = replacement.OriginalPrefab });
+                    commandBuffer.RemoveComponent<SpecialIndustryLotReplacement>(industryRoot);
+                    if (!EntityManager.HasComponent<Updated>(industryRoot))
+                    {
+                        commandBuffer.AddComponent<Updated>(industryRoot);
+                    }
+                }
             }
             commandBuffer.RemoveComponent<SpecialIndustrySurfaceOverlayState>(industryRoot);
             Mod.Log.InfoFormat(
@@ -2466,6 +2554,11 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
+            // A new replacement/revert supersedes any still-pending check for
+            // this same area. Keep the diagnostic aligned with its latest
+            // PrefabRef instead of rebuilding a stale target batch.
+            m_PendingBatchDiagnostics.RemoveAll(diagnostic => diagnostic.Area == areaEntity);
+
             m_PendingBatchDiagnostics.Add(new PendingBatchDiagnostic
             {
                 Area = areaEntity,
@@ -2517,16 +2610,52 @@ namespace AutomaticTextureReplacer
                     : -1;
                 bool hasSpecialIndustryMarker = EntityManager.HasComponent<SpecialIndustryLotReplacement>(diagnostic.Area);
                 bool currentPrefabIsSurface = currentPrefab != Entity.Null && EntityManager.HasComponent<SurfaceData>(currentPrefab);
-                bool canRebuildAreaBatch = !hasSpecialIndustryMarker || currentPrefabIsSurface;
+                // A cloned extractor root keeps its Lot/Extractor components, so
+                // the older guard excluded it even though its PrefabRef now
+                // points at a new render batch. Farm replacements happened to
+                // rebuild the global cache later, making the stone lot update.
+                bool currentPrefabIsOurTransparentClone = currentPrefab != Entity.Null &&
+                    m_PrefabSystem.TryGetPrefab<PrefabBase>(currentPrefab, out PrefabBase currentClone) &&
+                    m_TransparentIndustryPrefabClones.Values.Contains(currentClone);
+                bool canRebuildAreaBatch = !hasSpecialIndustryMarker || currentPrefabIsSurface ||
+                    currentPrefabIsOurTransparentClone;
                 bool hasBatch = EntityManager.HasComponent<Batch>(diagnostic.Area);
                 Batch batch = hasBatch ? EntityManager.GetComponentData<Batch>(diagnostic.Area) : default(Batch);
                 bool hasUpdated = EntityManager.HasComponent<Updated>(diagnostic.Area);
-                bool prefabMatches = currentPrefab == diagnostic.ExpectedPrefab;
+                bool prefabMatches = currentPrefab == diagnostic.ExpectedPrefab ||
+                    (hasSpecialIndustryMarker &&
+                     string.Equals(currentPrefabName, diagnostic.TargetName, StringComparison.Ordinal));
                 // PrefabSystem assigns a batch to newly registered visual variants
                 // asynchronously. The value captured when queuing can be stale (often 0).
                 if (prefabMatches && currentPrefabBatch >= 0)
                 {
+                    diagnostic.ExpectedPrefab = currentPrefab;
                     diagnostic.ExpectedBatchIndex = currentPrefabBatch;
+                }
+                if (hasSpecialIndustryMarker && prefabMatches && currentPrefabBatch > 0 &&
+                    (diagnostic.FramesChecked == 1 || diagnostic.FramesChecked == 2) &&
+                    currentPrefabBatch < m_AreaBatchSystem.GetBatchCount())
+                {
+                    bool texturesReady = m_AreaBatchSystem.GetAreaBatch(currentPrefabBatch, out _, out _, out _,
+                        out UnityEngine.Material batchMaterial, out _, out _, out _);
+                    if (m_PrefabSystem.TryGetPrefab<PrefabBase>(currentPrefab, out PrefabBase currentAsset) &&
+                        currentAsset != null && currentAsset.TryGet<RenderedArea>(out RenderedArea rendered) &&
+                        rendered != null)
+                    {
+                        Mod.Log.InfoFormat(
+                            "Transparent industry render path: area={0}, prefabEntity={1}, batch={2}, material='{3}', shader='{4}', alpha={5}, maps={6}/{7}/{8}, texturesReady={9}",
+                            diagnostic.Area,
+                            currentPrefab,
+                            currentPrefabBatch,
+                            batchMaterial != null ? batchMaterial.name : "<none>",
+                            batchMaterial != null ? batchMaterial.shader.name : "<none>",
+                            batchMaterial != null && batchMaterial.HasProperty("_BaseColor")
+                                ? batchMaterial.GetColor("_BaseColor").a : rendered.m_BaseColor.a,
+                            rendered.m_BaseColorMap != null,
+                            rendered.m_NormalMap != null,
+                            rendered.m_MaskMap != null,
+                            texturesReady);
+                    }
                 }
                 bool batchMatches = hasBatch && batch.m_BatchIndex == diagnostic.ExpectedBatchIndex;
                 Mod.Log.InfoFormat(
@@ -2946,6 +3075,166 @@ namespace AutomaticTextureReplacer
             return result;
         }
 
+        private bool TryUseTransparentIndustryPrefabClone(
+            Entity industryRoot,
+            Entity originalIndustryPrefab,
+            EntityCommandBuffer commandBuffer,
+            long operationId,
+            out Entity cloneEntity)
+        {
+            cloneEntity = Entity.Null;
+            if (industryRoot == Entity.Null || originalIndustryPrefab == Entity.Null ||
+                !EntityManager.Exists(industryRoot) || !EntityManager.HasComponent<PrefabRef>(industryRoot) ||
+                !m_PrefabSystem.TryGetPrefab<PrefabBase>(originalIndustryPrefab, out PrefabBase originalPrefab) ||
+                originalPrefab == null || !originalPrefab.TryGet<RenderedArea>(out RenderedArea originalRendered) ||
+                originalRendered == null)
+            {
+                return false;
+            }
+
+            Entity transparentSurfaceEntity = Entity.Null;
+            using (NativeArray<Entity> surfaces = m_SurfacePrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity surfaceEntity in surfaces)
+                {
+                    if (!m_PrefabSystem.TryGetPrefab<SurfacePrefab>(surfaceEntity, out SurfacePrefab surface) ||
+                        surface == null || !ReplacementRuleCatalog.IsTransparentSurface(surface.name))
+                    {
+                        continue;
+                    }
+
+                    transparentSurfaceEntity = surfaceEntity;
+                    break;
+                }
+            }
+
+            if (transparentSurfaceEntity == Entity.Null ||
+                !m_PrefabSystem.TryGetPrefab<SurfacePrefab>(transparentSurfaceEntity, out SurfacePrefab transparentSurface) ||
+                transparentSurface == null || !transparentSurface.TryGet<RenderedArea>(out RenderedArea transparentRendered) ||
+                transparentRendered == null || transparentRendered.m_Material == null)
+            {
+                Mod.Log.WarnFormat(
+                    "Transparent industry prefab clone skipped: operation={0}, source='{1}', reason=transparent material unavailable",
+                    operationId,
+                    originalPrefab.name);
+                return false;
+            }
+
+            if (m_TransparentIndustryPrefabClones.TryGetValue(originalIndustryPrefab, out PrefabBase existingClone) &&
+                m_PrefabSystem.TryGetEntity(existingClone, out cloneEntity) &&
+                cloneEntity != Entity.Null && EntityManager.Exists(cloneEntity))
+            {
+                QueueTransparentIndustryRootAssignment(industryRoot, originalIndustryPrefab,
+                    cloneEntity, transparentSurfaceEntity, commandBuffer);
+                Mod.Log.InfoFormat(
+                    "Transparent industry prefab clone reused: operation={0}, root={1}, source='{2}', clone='{3}'",
+                    operationId, industryRoot, originalPrefab.name, existingClone.name);
+                return true;
+            }
+
+            string cloneName = originalPrefab.name + " - Automatic Texture Replacer Transparent";
+            PrefabBase clone = originalPrefab.Clone(cloneName);
+            if (clone == null || !clone.TryGet<RenderedArea>(out RenderedArea cloneRendered) || cloneRendered == null)
+            {
+                Mod.Log.WarnFormat(
+                    "Transparent industry prefab clone skipped: operation={0}, source='{1}', reason=clone failed",
+                    operationId,
+                    originalPrefab.name);
+                return false;
+            }
+
+            cloneRendered.m_Version = RenderedArea.Version.OverrideMaterial;
+            cloneRendered.m_Material = transparentRendered.m_Material;
+            // AreaBatchSystem overwrites the cloned material's color and maps
+            // from RenderedArea while constructing its runtime batch. Preserve
+            // the original geometry/roundness, but clear every visual input.
+            cloneRendered.m_BaseColor = UnityEngine.Color.clear;
+            cloneRendered.m_BaseColorMap = null;
+            cloneRendered.m_NormalMap = null;
+            cloneRendered.m_MaskMap = null;
+            cloneRendered.m_Metallic = 0f;
+            cloneRendered.m_Smoothness = 0f;
+            cloneRendered.m_NormalOpacity = 0f;
+            cloneRendered.m_MetallicOpacity = 0f;
+            if (!m_PrefabSystem.AddPrefab(clone))
+            {
+                Mod.Log.WarnFormat(
+                    "Transparent industry prefab clone skipped: operation={0}, source='{1}', reason=AddPrefab failed",
+                    operationId,
+                    originalPrefab.name);
+                return false;
+            }
+
+            cloneEntity = m_PrefabSystem.GetEntity(clone);
+            if (cloneEntity == Entity.Null)
+            {
+                return false;
+            }
+
+            // The clone is new and not shared with any existing instance, so
+            // initializing its render data is safe. The original industry prefab
+            // is never modified.
+            m_PrefabSystem.UpdatePrefab(clone);
+            m_TransparentIndustryPrefabClones[originalIndustryPrefab] = clone;
+
+            int cloneBatch = EntityManager.HasComponent<RenderedAreaData>(cloneEntity)
+                ? EntityManager.GetComponentData<RenderedAreaData>(cloneEntity).m_BatchIndex
+                : -1;
+            Mod.Log.InfoFormat(
+                "Transparent industry prefab clone render data: source='{0}', clone='{1}', prefabEntity={2}, batch={3}, hasExtractorAreaData={4}, baseAlpha={5}, baseMap={6}, normalMap={7}, maskMap={8}",
+                originalPrefab.name,
+                clone.name,
+                cloneEntity,
+                cloneBatch,
+                EntityManager.HasComponent<ExtractorAreaData>(cloneEntity),
+                cloneRendered.m_BaseColor.a,
+                cloneRendered.m_BaseColorMap != null,
+                cloneRendered.m_NormalMap != null,
+                cloneRendered.m_MaskMap != null);
+
+            QueueTransparentIndustryRootAssignment(industryRoot, originalIndustryPrefab,
+                cloneEntity, transparentSurfaceEntity, commandBuffer);
+
+            Mod.Log.InfoFormat(
+                "Transparent industry prefab clone assigned: operation={0}, root={1}, source='{2}', clone='{3}'",
+                operationId,
+                industryRoot,
+                originalPrefab.name,
+                clone.name);
+            return true;
+        }
+
+        private void QueueTransparentIndustryRootAssignment(
+            Entity industryRoot,
+            Entity originalIndustryPrefab,
+            Entity cloneEntity,
+            Entity transparentSurfaceEntity,
+            EntityCommandBuffer commandBuffer)
+        {
+            commandBuffer.SetComponent(industryRoot, new PrefabRef { m_Prefab = cloneEntity });
+            if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(industryRoot))
+            {
+                commandBuffer.SetComponent(industryRoot, new SpecialIndustryLotReplacement
+                {
+                    OriginalPrefab = originalIndustryPrefab,
+                    TargetSurfacePrefab = transparentSurfaceEntity,
+                });
+            }
+            else
+            {
+                commandBuffer.AddComponent(industryRoot, new SpecialIndustryLotReplacement
+                {
+                    OriginalPrefab = originalIndustryPrefab,
+                    TargetSurfacePrefab = transparentSurfaceEntity,
+                });
+            }
+            if (!EntityManager.HasComponent<Updated>(industryRoot))
+            {
+                commandBuffer.AddComponent<Updated>(industryRoot);
+            }
+
+        }
+
         private bool TryQueueIndustrySurfaceOverlay(
             Entity industryRoot,
             Entity industryPrefab,
@@ -2966,15 +3255,57 @@ namespace AutomaticTextureReplacer
                 return false;
             }
 
+            bool hasSubAreaBuffer = EntityManager.HasBuffer<Game.Areas.SubArea>(industryRoot);
+            if (!hasSubAreaBuffer)
+            {
+                m_IndustryPrefabsWithoutInitialSubArea.Add(industryPrefab);
+            }
+            // A root that first needed SubArea added uses the original overlay
+            // path on later replacements as well. A restored save can already
+            // contain the buffer and overlay state, so recognize that case too.
+            bool useOriginalRootPath = m_IndustryPrefabsWithoutInitialSubArea.Contains(industryPrefab) ||
+                (EntityManager.HasComponent<SpecialIndustrySurfaceOverlayState>(industryRoot) &&
+                 !EntityManager.HasComponent<SpecialIndustryLotReplacement>(industryRoot));
+            // Forestry-like lots are still being assembled when their first
+            // extraction surface is queued: SubArea does not exist yet. Changing
+            // their root PrefabRef in the same command-buffer playback as
+            // AddBuffer<SubArea> and the owned overlay can crash Unity ECS.
+            // Keep the original root until its child-area structure exists.
+            if (!useOriginalRootPath)
+            {
+                if (!TryUseTransparentIndustryPrefabClone(
+                        industryRoot,
+                        industryPrefab,
+                        commandBuffer,
+                        operationId,
+                        out Entity assignedPrefab))
+                {
+                    Mod.Log.WarnFormat(
+                        "Special-industry surface overlay skipped: operation={0}, root={1}, reason=transparent root clone unavailable",
+                        operationId,
+                        industryRoot);
+                    return false;
+                }
+
+                if (assignedPrefab != industryPrefab)
+                {
+                    QueueBatchDiagnostic(
+                        industryRoot,
+                        industryPrefab,
+                        assignedPrefab,
+                        m_PrefabSystem.GetPrefabName(industryPrefab),
+                        m_PrefabSystem.GetPrefabName(assignedPrefab));
+                }
+            }
             // Some extractor root areas (notably Forestry Lot) have no child
             // sub-areas until we add a replacement overlay. Give the owner the
             // buffer needed by SubAreaReferencesSystem before creating the owned
             // surface; leave its ExtractorAreaData and root prefab untouched.
-            if (!EntityManager.HasBuffer<Game.Areas.SubArea>(industryRoot))
+            if (!hasSubAreaBuffer)
             {
                 commandBuffer.AddBuffer<Game.Areas.SubArea>(industryRoot);
                 Mod.Log.InfoFormat(
-                    "Special-industry root SubArea buffer creation queued: operation={0}, root={1}, prefab='{2}'",
+                    "Special-industry root SubArea buffer creation queued without prefab swap: operation={0}, root={1}, prefab='{2}'",
                     operationId,
                     industryRoot,
                     m_PrefabSystem.GetPrefabName(industryPrefab));

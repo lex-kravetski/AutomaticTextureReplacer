@@ -287,13 +287,14 @@ const register = (moduleRegistry) => {
         if (!grouped.has(name)) grouped.set(name, []);
         grouped.get(name).push(surface);
       });
-      return Array.from(grouped, ([name, surfaces]) => ({ name, surfaces }))
-        .sort((first, second) => {
+      const orderedGroups = Array.from(grouped, ([name, surfaces]) => ({ name, surfaces }));
+      if (pickerContext.kind === "areas" && !targetPicker) return orderedGroups;
+      return orderedGroups.sort((first, second) => {
           const priority = (name) => name === "In-game" ? 0 : name === "Special Industries" ? 1 : 2;
           const order = priority(first.name) - priority(second.name);
           return order || first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
         });
-    }, [pickerCatalog]);
+    }, [pickerCatalog, pickerContext.kind, targetPicker]);
     React.useEffect(() => {
       if (open) {
         // Keep selections that are currently filtered out. They remain part of the rule

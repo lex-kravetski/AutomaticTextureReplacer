@@ -596,14 +596,66 @@ namespace AutomaticTextureReplacer
                         }
                     }
 
+                    // Some built-in surface prefabs do not have RenderedAreaData
+                    // yet when the catalog is built. In that case the prefab's
+                    // material is null and its batch index is not usable, but an
+                    // already-created area batch still provides a compatible
+                    // area shader/material template.
+                    if (sourceMaterial == null && m_AreaBatchSystem != null)
+                    {
+                        for (int batchIndex = 0; batchIndex < m_AreaBatchSystem.GetBatchCount(); batchIndex++)
+                        {
+                            if (!m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material batchMaterial, out _, out _, out _) ||
+                                batchMaterial == null)
+                            {
+                                continue;
+                            }
+
+                            sourceMaterial = batchMaterial;
+                            break;
+                        }
+                    }
+
                     if (sourceMaterial != null)
                     {
-                        Material transparentMaterial = new Material(sourceMaterial)
+                        // Do not clone the Missing Area material itself. A clone
+                        // would inherit its textures and lighting properties and
+                        // could remain visible even with a clear base color.
+                        // Reuse only the compatible area shader and initialize a
+                        // fresh material with explicitly transparent properties.
+                        Material transparentMaterial = new Material(sourceMaterial.shader)
                         {
                             name = "ATR Transparent Surface Material",
                             renderQueue = 3000,
                         };
                         transparentMaterial.SetColor("_BaseColor", Color.clear);
+                        if (transparentMaterial.HasProperty("_Color"))
+                        {
+                            transparentMaterial.SetColor("_Color", Color.clear);
+                        }
+                        if (transparentMaterial.HasProperty("_EmissionColor"))
+                        {
+                            transparentMaterial.SetColor("_EmissionColor", Color.clear);
+                        }
+                        if (transparentMaterial.HasProperty("_SpecColor"))
+                        {
+                            transparentMaterial.SetColor("_SpecColor", Color.clear);
+                        }
+                        if (transparentMaterial.HasProperty("_Metallic"))
+                        {
+                            transparentMaterial.SetFloat("_Metallic", 0f);
+                        }
+                        if (transparentMaterial.HasProperty("_Smoothness"))
+                        {
+                            transparentMaterial.SetFloat("_Smoothness", 0f);
+                        }
+                        foreach (string textureProperty in new[] { "_BaseMap", "_MainTex", "_MaskMap", "_NormalMap", "_BumpMap" })
+                        {
+                            if (transparentMaterial.HasProperty(textureProperty))
+                            {
+                                transparentMaterial.SetTexture(textureProperty, null);
+                            }
+                        }
                         transparentMaterial.SetFloat("_SurfaceType", 1f);
                         transparentMaterial.SetFloat("_AlphaCutoffEnable", 0f);
                         transparentMaterial.SetFloat("_BlendMode", 0f);
@@ -660,9 +712,11 @@ namespace AutomaticTextureReplacer
                     }
 
                     DynamicBuffer<UIGroupElement> categories = entityManager.GetBuffer<UIGroupElement>(menuEntity, true);
-                    foreach (UIGroupElement categoryEntry in categories)
+                    using NativeList<UIObjectInfo> sortedCategories = UIObjectInfo.GetSortedObjects(entityManager, categories, Allocator.Temp);
+                    sortedCategories.Sort();
+                    foreach (UIObjectInfo categoryEntry in sortedCategories)
                     {
-                        if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryEntry.m_Prefab, out UIAssetCategoryPrefab category) ||
+                        if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryEntry.entity, out UIAssetCategoryPrefab category) ||
                             category == null)
                         {
                             continue;
@@ -675,23 +729,25 @@ namespace AutomaticTextureReplacer
                             continue;
                         }
 
-                        DynamicBuffer<UIGroupElement> menuEntries = entityManager.GetBuffer<UIGroupElement>(categoryEntry.m_Prefab, true);
+                        DynamicBuffer<UIGroupElement> menuEntries = entityManager.GetBuffer<UIGroupElement>(categoryEntry.entity, true);
                         Mod.Log.InfoFormat(
                             "Reading special-industry menu category: menu='{0}', category='{1}', entries={2}",
                             menuName,
                             categoryName,
                             menuEntries.Length);
                         int resolvedEntries = 0;
-                        foreach (UIGroupElement menuEntry in menuEntries)
+                        using NativeList<UIObjectInfo> sortedEntries = UIObjectInfo.GetSortedObjects(entityManager, menuEntries, Allocator.Temp);
+                        sortedEntries.Sort();
+                        foreach (UIObjectInfo menuEntry in sortedEntries)
                         {
-                            if (!prefabSystem.TryGetPrefab<PrefabBase>(menuEntry.m_Prefab, out PrefabBase prefab) ||
+                            if (!prefabSystem.TryGetPrefab<PrefabBase>(menuEntry.entity, out PrefabBase prefab) ||
                                 prefab == null)
                             {
                                 Mod.Log.WarnFormat(
                                     "Special-industry menu entry could not resolve to a prefab: category='{0}', entity={1}, hasPrefabData={2}",
                                     categoryName,
-                                    menuEntry.m_Prefab,
-                                    entityManager.HasComponent<PrefabData>(menuEntry.m_Prefab));
+                                    menuEntry.entity,
+                                    entityManager.HasComponent<PrefabData>(menuEntry.entity));
                                 continue;
                             }
 
@@ -743,10 +799,7 @@ namespace AutomaticTextureReplacer
             }
 
             m_AreaCatalogIndustryCount = catalog.Count;
-            m_AreaCatalogBuildTask = Task.Run(() => catalog
-                .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
-                .ToList())
-                .ContinueWith(task => JSON.Dump(task.GetAwaiter().GetResult()), TaskScheduler.Default);
+            m_AreaCatalogBuildTask = Task.Run(() => JSON.Dump(catalog));
             Mod.Log.InfoFormat("Special industry menu catalog captured: entries={0}", m_AreaCatalogIndustryCount);
         }
 
