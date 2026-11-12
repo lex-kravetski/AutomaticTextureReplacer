@@ -1153,25 +1153,14 @@ namespace AutomaticTextureReplacer
                         if (!m_IndustryAreasScheduledThisFrame.Add(fieldArea))
                             continue;
                         Entity oldPrefab = EntityManager.GetComponentData<PrefabRef>(fieldArea).m_Prefab;
-                        PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(fieldArea);
-                        prefabRef.m_Prefab = replacementSurface;
-                        commandBuffer.SetComponent(fieldArea, prefabRef);
-                        var replacementMarker = new SpecialIndustryLotReplacement { OriginalPrefab = oldPrefab, TargetSurfacePrefab = replacementSurface };
-                        if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(fieldArea))
-                            commandBuffer.SetComponent(fieldArea, replacementMarker);
-                        else
-                            commandBuffer.AddComponent(fieldArea, replacementMarker);
-                        if (!EntityManager.HasComponent<Updated>(fieldArea))
-                        {
-                            commandBuffer.AddComponent<Updated>(fieldArea);
-                        }
-
-                        QueueBatchDiagnostic(
+                        ApplySurfacePrefabReplacement(
                             fieldArea,
                             oldPrefab,
                             replacementSurface,
+                            commandBuffer,
                             m_PrefabSystem.GetPrefabName(oldPrefab),
-                            m_PrefabSystem.GetPrefabName(replacementSurface));
+                            m_PrefabSystem.GetPrefabName(replacementSurface),
+                            oldPrefab);
                         Mod.Log.InfoFormat(
                             "Special-industry field replacement binding reapplied after area edit: lot={0}, mapFeature={1}, field={2}, oldPrefab='{3}', targetSurface='{4}'",
                             industryArea,
