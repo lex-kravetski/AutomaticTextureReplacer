@@ -533,11 +533,13 @@ namespace AutomaticTextureReplacer
                         continue;
 
                     LogSurfaceGeometry("construction-before", area, source);
-                    commands.SetComponent(area, new PrefabRef { m_Prefab = target });
-                    ClearReplacementAreaExpansion(area);
-                    CopyReplacementEdgeMaterialSettings(source, target);
-                    if (!EntityManager.HasComponent<Updated>(area)) commands.AddComponent<Updated>(area);
-                    QueueBatchDiagnostic(area, source, target, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(target));
+                    ApplySurfacePrefabReplacement(
+                        area,
+                        source,
+                        target,
+                        commands,
+                        m_PrefabSystem.GetPrefabName(source),
+                        m_PrefabSystem.GetPrefabName(target));
                     Mod.Log.InfoFormat("New building surface replacement scheduled after creation: area={0}, building={1}, source='{2}', target='{3}'", area, building, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(target));
                 }
             }
@@ -656,13 +658,13 @@ namespace AutomaticTextureReplacer
                                 !m_QueuedConstructionSurfaceAreas.Add(area))
                                 continue;
 
-                            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = request.TargetPrefab });
-                            ClearReplacementAreaExpansion(area);
-                            CopyReplacementEdgeMaterialSettings(source, request.TargetPrefab);
-                            if (!EntityManager.HasComponent<Updated>(area))
-                                commandBuffer.AddComponent<Updated>(area);
-                            QueueBatchDiagnostic(area, source, request.TargetPrefab,
-                                m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            ApplySurfacePrefabReplacement(
+                                area,
+                                source,
+                                request.TargetPrefab,
+                                commandBuffer,
+                                m_PrefabSystem.GetPrefabName(source),
+                                m_PrefabSystem.GetPrefabName(request.TargetPrefab));
                             request.SurfaceAreaObserved = true;
                             Mod.Log.InfoFormat(
                                 "Automatic construction surface swapped by owner match: area={0}, owner={1}, source='{2}', target='{3}'",
@@ -693,12 +695,13 @@ namespace AutomaticTextureReplacer
                                 !m_QueuedConstructionSurfaceAreas.Add(area))
                                 continue;
 
-                            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = request.TargetPrefab });
-                            ClearReplacementAreaExpansion(area);
-                            CopyReplacementEdgeMaterialSettings(source, request.TargetPrefab);
-                            if (!EntityManager.HasComponent<Updated>(area)) commandBuffer.AddComponent<Updated>(area);
-                            QueueBatchDiagnostic(area, source, request.TargetPrefab,
-                                m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                            ApplySurfacePrefabReplacement(
+                                area,
+                                source,
+                                request.TargetPrefab,
+                                commandBuffer,
+                                m_PrefabSystem.GetPrefabName(source),
+                                m_PrefabSystem.GetPrefabName(request.TargetPrefab));
                             request.SurfaceAreaObserved = true;
                             Mod.Log.InfoFormat(
                                 "Automatic construction surface swapped after area creation: area={0}, source='{1}', target='{2}'",
@@ -870,24 +873,14 @@ namespace AutomaticTextureReplacer
                             {
                                 continue;
                             }
-                            var replacementMarker = new SpecialIndustryLotReplacement { OriginalPrefab = originalFieldPrefab, TargetSurfacePrefab = request.TargetPrefab };
-                            if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(fieldArea))
-                                commandBuffer.SetComponent(fieldArea, replacementMarker);
-                            else
-                                commandBuffer.AddComponent(fieldArea, replacementMarker);
-                            commandBuffer.SetComponent(fieldArea, new PrefabRef { m_Prefab = request.TargetPrefab });
-                            ClearReplacementAreaExpansion(fieldArea);
-                            CopyReplacementEdgeMaterialSettings(originalFieldPrefab, request.TargetPrefab);
-                            if (!EntityManager.HasComponent<Updated>(fieldArea))
-                            {
-                                commandBuffer.AddComponent<Updated>(fieldArea);
-                            }
-                            QueueBatchDiagnostic(
+                            ApplySurfacePrefabReplacement(
                                 fieldArea,
-                                request.SourcePrefab,
+                                originalFieldPrefab,
                                 request.TargetPrefab,
+                                commandBuffer,
                                 m_PrefabSystem.GetPrefabName(request.SourcePrefab),
-                                m_PrefabSystem.GetPrefabName(request.TargetPrefab));
+                                m_PrefabSystem.GetPrefabName(request.TargetPrefab),
+                                originalFieldPrefab);
                             Mod.Log.InfoFormat(
                                 "Automatic special-industry lot replacement scheduled from changed sub-area: industry={0}, lot={1}, field={2}, source='{3}', targetSurface='{4}'",
                                 industryArea,
@@ -1412,6 +1405,49 @@ namespace AutomaticTextureReplacer
                 changed,
                 alreadyDefault,
                 noDefaultMapping);
+        }
+
+        private bool ApplySurfacePrefabReplacement(
+            Entity area,
+            Entity sourcePrefab,
+            Entity targetPrefab,
+            EntityCommandBuffer commandBuffer,
+            string sourceName,
+            string targetName,
+            Entity originalSpecialIndustryPrefab = default)
+        {
+            if (area == Entity.Null || sourcePrefab == Entity.Null || targetPrefab == Entity.Null ||
+                !EntityManager.Exists(area) || !EntityManager.HasComponent<PrefabRef>(area))
+            {
+                return false;
+            }
+
+            if (originalSpecialIndustryPrefab != Entity.Null)
+            {
+                var marker = new SpecialIndustryLotReplacement
+                {
+                    OriginalPrefab = originalSpecialIndustryPrefab,
+                    TargetSurfacePrefab = targetPrefab,
+                };
+                if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(area))
+                {
+                    commandBuffer.SetComponent(area, marker);
+                }
+                else
+                {
+                    commandBuffer.AddComponent(area, marker);
+                }
+            }
+
+            commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = targetPrefab });
+            ClearReplacementAreaExpansion(area);
+            CopyReplacementEdgeMaterialSettings(sourcePrefab, targetPrefab);
+            if (!EntityManager.HasComponent<Updated>(area))
+            {
+                commandBuffer.AddComponent<Updated>(area);
+            }
+            QueueBatchDiagnostic(area, sourcePrefab, targetPrefab, sourceName, targetName);
+            return true;
         }
 
         private void ClearReplacementAreaExpansion(Entity area)
@@ -2032,17 +2068,11 @@ namespace AutomaticTextureReplacer
                     Entity ownerEntity = EntityManager.HasComponent<Owner>(areaEntity)
                         ? EntityManager.GetComponentData<Owner>(areaEntity).m_Owner
                         : Entity.Null;
-                    updateCommandBuffer.SetComponent(areaEntity, new PrefabRef { m_Prefab = replacement });
-                    ClearReplacementAreaExpansion(areaEntity);
-                    CopyReplacementEdgeMaterialSettings(prefabRef.m_Prefab, replacement);
-                    if (!EntityManager.HasComponent<Updated>(areaEntity))
-                    {
-                        updateCommandBuffer.AddComponent<Updated>(areaEntity);
-                    }
-                    QueueBatchDiagnostic(
+                    ApplySurfacePrefabReplacement(
                         areaEntity,
                         prefabRef.m_Prefab,
                         replacement,
+                        updateCommandBuffer,
                         sourceName,
                         m_PrefabSystem.GetPrefabName(replacement));
                     hasUpdateCommandBuffer = true;
@@ -2277,20 +2307,14 @@ namespace AutomaticTextureReplacer
                                 originalPrefab = oldPrefabRef.m_Prefab;
                             }
 
-                            var marker = new SpecialIndustryLotReplacement
-                            {
-                                OriginalPrefab = originalPrefab,
-                                TargetSurfacePrefab = targetSurface,
-                            };
-                            if (EntityManager.HasComponent<SpecialIndustryLotReplacement>(childArea))
-                                updateCommandBuffer.SetComponent(childArea, marker);
-                            else
-                                updateCommandBuffer.AddComponent(childArea, marker);
-                            updateCommandBuffer.SetComponent(childArea, new PrefabRef { m_Prefab = targetSurface });
-                            ClearReplacementAreaExpansion(childArea);
-                            CopyReplacementEdgeMaterialSettings(originalPrefab, targetSurface);
-                            if (!EntityManager.HasComponent<Updated>(childArea))
-                                updateCommandBuffer.AddComponent<Updated>(childArea);
+                            ApplySurfacePrefabReplacement(
+                                childArea,
+                                originalPrefab,
+                                targetSurface,
+                                updateCommandBuffer,
+                                sourceLabel,
+                                m_PrefabSystem.GetPrefabName(targetSurface),
+                                originalPrefab);
                             if (EntityManager.HasComponent<SpecialIndustrySurfaceOverlayState>(industryRoot))
                             {
                                 updateCommandBuffer.SetComponent(industryRoot, new SpecialIndustrySurfaceOverlayState
