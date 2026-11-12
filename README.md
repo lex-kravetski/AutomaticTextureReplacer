@@ -1,25 +1,17 @@
-# Automatic Texture Replacer
+# Replacement Solutions
 
-Starter project for a Cities: Skylines II C# mod, following the project and publishing layout used by `SmartZoningExtension`.
-
-## Requirements
-
-- .NET SDK
-- Cities: Skylines II modding tools installed
-- User environment variable `CSII_TOOLPATH` pointing to the game's modding tools directory
+A Cities: Skylines II mod for replacing building, hand-drawn, and specialized-industry surfaces. Rules can run on existing areas through the dialog buttons or automatically when new buildings and industry areas are created. A transparent surface is available for hiding unwanted surface artwork.
 
 ## Build
 
-Open `AutomaticTextureReplacer.sln` in Visual Studio, or run:
+The project requires the .NET SDK, Cities: Skylines II modding tools, and the `CSII_TOOLPATH` user environment variable pointing to the modding tools directory.
 
 ```powershell
-dotnet build .\AutomaticTextureReplacer.sln
+dotnet build .\ReplacementSolutions.sln -c Release
 ```
 
-The top-left toolbar button opens the resizable, draggable **Automatic Texture Replacer** dialog. Its open state, position, and size are stored in the mod settings and restored when the game starts. These values are hidden from the Mods settings UI.
-
-The dialog body is currently a placeholder. The mod entry point is `AutomaticTextureReplacer/Mod.cs`; texture discovery and replacement behavior will be added in later steps.
+The Release build deploys the mod to the game's local Mods directory. Settings are stored in `ReplacementSolutions.coc` in the Cities: Skylines II user data directory. An existing `AutomaticTextureReplacer.coc` is copied on first launch; rules are cleared because the transparent surface has a new internal ID.
 
 ## Publishing
 
-The project includes VS Code tasks for creating a listing, publishing a new version, and updating the listing. Set the mod's own Paradox Mods ID in `AutomaticTextureReplacer/Properties/PublishConfiguration.xml` before updating an existing listing. The current configuration has no ID and is private by default.
+VS Code tasks are available for the first Paradox Mods publication, a new version, and listing updates. Set the mod ID in `ReplacementSolutions/Properties/PublishConfiguration.xml` before updating an existing listing.

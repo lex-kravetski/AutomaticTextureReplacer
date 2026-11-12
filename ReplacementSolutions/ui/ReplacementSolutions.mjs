@@ -1,7 +1,7 @@
 /*!
  * Cities: Skylines II UI Module
  *
- * Id: AutomaticTextureReplacer
+ * Id: ReplacementSolutions
  * Version: 0.1.0
  * Dependencies:
  */
@@ -10,7 +10,7 @@ const register = (moduleRegistry) => {
   const api = window["cs2/api"];
   const ui = window["cs2/ui"] || {};
   if (!React || !api) {
-    console.log("[AutomaticTextureReplacer] UI globals are unavailable");
+    console.log("[ReplacementSolutions] UI globals are unavailable");
     return;
   }
 
@@ -83,25 +83,25 @@ const register = (moduleRegistry) => {
   };
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
-  const surfaceCatalog$ = bindValue("automatictexturereplacer", "surfaceCatalog", "[]");
-  const areaCatalog$ = bindValue("automatictexturereplacer", "areaCatalog", "[]");
-  const surfacePickerOpen$ = bindValue("automatictexturereplacer", "surfacePickerOpen", false);
-  const surfacePickerCollapsedGroups$ = bindValue("automatictexturereplacer", "surfacePickerCollapsedGroups", "{}");
-  const surfacePickerX$ = bindValue("automatictexturereplacer", "surfacePickerX", -1);
-  const surfacePickerY$ = bindValue("automatictexturereplacer", "surfacePickerY", -1);
-  const surfacePickerWidth$ = bindValue("automatictexturereplacer", "surfacePickerWidth", -1);
-  const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", -1);
-  const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
-  const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
-  const replacementScope$ = bindValue("automatictexturereplacer", "replacementScope", "assets");
-  const activeMainTab$ = bindValue("automatictexturereplacer", "activeMainTab", "surfaces");
-  const alsoNewBuildings$ = bindValue("automatictexturereplacer", "alsoNewBuildings", false);
-  const showInGameSurfacesAsTargets$ = bindValue("automatictexturereplacer", "showInGameSurfacesAsTargets", false);
-  const showSpecialIndustrySurfacesAsTargets$ = bindValue("automatictexturereplacer", "showSpecialIndustrySurfacesAsTargets", false);
-  const showModSurfacesAsSources$ = bindValue("automatictexturereplacer", "showModSurfacesAsSources", false);
-  const showRevertAllButton$ = bindValue("automatictexturereplacer", "showRevertAllButton", false);
-  const rulesJson$ = bindValue("automatictexturereplacer", "rulesJson", "[]");
-  const areaRulesJson$ = bindValue("automatictexturereplacer", "areaRulesJson", "[]");
+  const surfaceCatalog$ = bindValue("replacementsolutions", "surfaceCatalog", "[]");
+  const areaCatalog$ = bindValue("replacementsolutions", "areaCatalog", "[]");
+  const surfacePickerOpen$ = bindValue("replacementsolutions", "surfacePickerOpen", false);
+  const surfacePickerCollapsedGroups$ = bindValue("replacementsolutions", "surfacePickerCollapsedGroups", "{}");
+  const surfacePickerX$ = bindValue("replacementsolutions", "surfacePickerX", -1);
+  const surfacePickerY$ = bindValue("replacementsolutions", "surfacePickerY", -1);
+  const surfacePickerWidth$ = bindValue("replacementsolutions", "surfacePickerWidth", -1);
+  const surfacePickerHeight$ = bindValue("replacementsolutions", "surfacePickerHeight", -1);
+  const surfacePickerContext$ = bindValue("replacementsolutions", "surfacePickerContext", "");
+  const dialogFontSize$ = bindValue("replacementsolutions", "dialogFontSize", 100);
+  const replacementScope$ = bindValue("replacementsolutions", "replacementScope", "assets");
+  const activeMainTab$ = bindValue("replacementsolutions", "activeMainTab", "surfaces");
+  const alsoNewBuildings$ = bindValue("replacementsolutions", "alsoNewBuildings", false);
+  const showInGameSurfacesAsTargets$ = bindValue("replacementsolutions", "showInGameSurfacesAsTargets", false);
+  const showSpecialIndustrySurfacesAsTargets$ = bindValue("replacementsolutions", "showSpecialIndustrySurfacesAsTargets", false);
+  const showModSurfacesAsSources$ = bindValue("replacementsolutions", "showModSurfacesAsSources", false);
+  const showRevertAllButton$ = bindValue("replacementsolutions", "showRevertAllButton", false);
+  const rulesJson$ = bindValue("replacementsolutions", "rulesJson", "[]");
+  const areaRulesJson$ = bindValue("replacementsolutions", "areaRulesJson", "[]");
   const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
@@ -155,7 +155,7 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, icons)));
     };
     const actions = h("div", { className: "atrRuleActions" },
-      createButton("Replace", () => trigger("automatictexturereplacer", ruleKind === "areas" ? "replaceAreas" : "replaceSurfaces", String(rule.id)), {
+      createButton("Replace", () => trigger("replacementsolutions", ruleKind === "areas" ? "replaceAreas" : "replaceSurfaces", String(rule.id)), {
         variant: "primary",
         title: ruleKind === "areas" ? "Replace this industry area" : "Replace rule",
         className: "atrReplaceButton",
@@ -177,24 +177,24 @@ const register = (moduleRegistry) => {
     surfaces("Edit replacement surfaces", "target"),
     actions);
   });
-  const dialogOpen$ = bindValue("automatictexturereplacer", "dialogOpen", false);
-  const dialogX$ = bindValue("automatictexturereplacer", "dialogX", -1);
-  const dialogY$ = bindValue("automatictexturereplacer", "dialogY", -1);
-  const dialogWidth$ = bindValue("automatictexturereplacer", "dialogWidth", -1);
-  const dialogHeight$ = bindValue("automatictexturereplacer", "dialogHeight", -1);
+  const dialogOpen$ = bindValue("replacementsolutions", "dialogOpen", false);
+  const dialogX$ = bindValue("replacementsolutions", "dialogX", -1);
+  const dialogY$ = bindValue("replacementsolutions", "dialogY", -1);
+  const dialogWidth$ = bindValue("replacementsolutions", "dialogWidth", -1);
+  const dialogHeight$ = bindValue("replacementsolutions", "dialogHeight", -1);
   const ToolbarButton = () => {
     const open = useValue(dialogOpen$);
-    const toggle = () => trigger("automatictexturereplacer", "toggleDialog");
+    const toggle = () => trigger("replacementsolutions", "toggleDialog");
     const props = {
       variant: "floating",
-      src: "coui://automatictexturereplacer/images/AutomaticTextureReplacer_Icon.svg",
+      src: "coui://replacementsolutions/images/ReplacementSolutions_Icon.svg",
       selected: open,
-      tooltipLabel: "Automatic Texture Replacer",
+      tooltipLabel: "Replacement Solutions",
       onSelect: toggle,
     };
     return ui.Button
       ? h(ui.Button, props)
-      : h("button", { className: "atrToolbarFallback", onClick: toggle, title: "Automatic Texture Replacer" }, "ATR");
+      : h("button", { className: "atrToolbarFallback", onClick: toggle, title: "Replacement Solutions" }, "ATR");
   };
 
   const SurfaceThumbnailPreloader = () => {
@@ -205,7 +205,7 @@ const register = (moduleRegistry) => {
           .map((surface) => surface.thumbnail)
           .filter((src) => src && !src.startsWith("thumbnail://"));
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid surface catalog while warming thumbnails", error);
+        console.error("[ReplacementSolutions] Invalid surface catalog while warming thumbnails", error);
         return [];
       }
     }, [catalogJson]);
@@ -241,7 +241,7 @@ const register = (moduleRegistry) => {
       try {
         return JSON.parse(catalogJson || "[]");
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid surface catalog", error);
+        console.error("[ReplacementSolutions] Invalid surface catalog", error);
         return [];
       }
     }, [catalogJson]);
@@ -249,7 +249,7 @@ const register = (moduleRegistry) => {
       try {
         return JSON.parse(areaCatalogJson || "[]");
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid special industry catalog", error);
+        console.error("[ReplacementSolutions] Invalid special industry catalog", error);
         return [];
       }
     }, [areaCatalogJson]);
@@ -257,7 +257,7 @@ const register = (moduleRegistry) => {
       try {
         return JSON.parse(contextJson || "{}");
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid surface picker context", error);
+        console.error("[ReplacementSolutions] Invalid surface picker context", error);
         return {};
       }
     }, [contextJson]);
@@ -303,7 +303,7 @@ const register = (moduleRegistry) => {
         try {
           setCollapsedGroups(JSON.parse(collapsedGroupsJson || "{}"));
         } catch (error) {
-          console.error("[AutomaticTextureReplacer] Invalid collapsed groups state", error);
+          console.error("[ReplacementSolutions] Invalid collapsed groups state", error);
           setCollapsedGroups({});
         }
         lastSelection.current = null;
@@ -329,7 +329,7 @@ const register = (moduleRegistry) => {
         const x = Math.max(0, Math.round(rect.left + e.clientX - startX));
         const y = Math.max(0, Math.round(rect.top + e.clientY - startY));
         setDragPosition({ x, y });
-        trigger("automatictexturereplacer", "setSurfacePickerPosition", x + "," + y);
+        trigger("replacementsolutions", "setSurfacePickerPosition", x + "," + y);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -358,9 +358,9 @@ const register = (moduleRegistry) => {
         if (fromLeft) {
           const x = Math.max(0, Math.round(startLeft + startWidth - width));
           setDragPosition((current) => ({ ...(current || position), x }));
-          trigger("automatictexturereplacer", "setSurfacePickerPosition", x + "," + position.y);
+          trigger("replacementsolutions", "setSurfacePickerPosition", x + "," + position.y);
         }
-        trigger("automatictexturereplacer", "setSurfacePickerSize", width + "," + height);
+        trigger("replacementsolutions", "setSurfacePickerSize", width + "," + height);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -374,7 +374,7 @@ const register = (moduleRegistry) => {
         ? createButton(label, onSelect, { ...options, variant })
         : createTintedPrimaryButton(label, onSelect, options);
     };
-    const closePicker = () => trigger("automatictexturereplacer", "closeSurfacePicker");
+    const closePicker = () => trigger("replacementsolutions", "closeSurfacePicker");
     const applySelection = () => {
       const selectedIdsArray = Array.from(selectedIds);
         const sideProperty = pickerContext.side === "target"
@@ -386,9 +386,9 @@ const register = (moduleRegistry) => {
         const updatedRules = rules.map((rule) => String(rule.id) === String(pickerContext.rowId)
           ? { ...rule, [sideProperty]: selectedIdsArray }
           : rule);
-        trigger("automatictexturereplacer", pickerContext.kind === "areas" ? "saveAreaRules" : "saveRules", JSON.stringify(updatedRules));
+        trigger("replacementsolutions", pickerContext.kind === "areas" ? "saveAreaRules" : "saveRules", JSON.stringify(updatedRules));
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Failed to apply surface selection", error);
+        console.error("[ReplacementSolutions] Failed to apply surface selection", error);
       }
       closePicker();
     };
@@ -433,7 +433,7 @@ const register = (moduleRegistry) => {
       const next = {};
       groups.forEach((group) => { next[group.name] = collapsed; });
       setCollapsedGroups(next);
-      trigger("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
+      trigger("replacementsolutions", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
     };
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
@@ -466,7 +466,7 @@ const register = (moduleRegistry) => {
       const toggle = () => {
         const next = { ...collapsedGroups, [group.name]: !collapsedGroups[group.name] };
         setCollapsedGroups(next);
-        trigger("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
+        trigger("replacementsolutions", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
       };
       const groupToggle = h("div", {
         className: "atrPickerGroupToggle",
@@ -561,7 +561,7 @@ const register = (moduleRegistry) => {
       try {
         return JSON.parse(catalogJson || "[]");
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid surface catalog", error);
+        console.error("[ReplacementSolutions] Invalid surface catalog", error);
         return [];
       }
     }, [catalogJson]);
@@ -570,7 +570,7 @@ const register = (moduleRegistry) => {
       try {
         return JSON.parse(areaCatalogJson || "[]");
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid special industry catalog", error);
+        console.error("[ReplacementSolutions] Invalid special industry catalog", error);
         return [];
       }
     }, [areaCatalogJson]);
@@ -590,7 +590,7 @@ const register = (moduleRegistry) => {
           Number.isFinite(Number(rule.id)) ? Math.max(highest, Number(rule.id)) : highest, 0);
         nextRuleId.current = Math.max(nextRuleId.current, highestNumericId + 1);
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid saved rules", error);
+        console.error("[ReplacementSolutions] Invalid saved rules", error);
         rulesRef.current = [];
         setRules([]);
       }
@@ -610,7 +610,7 @@ const register = (moduleRegistry) => {
           Number.isFinite(Number(rule.id)) ? Math.max(highest, Number(rule.id)) : highest, 0);
         nextAreaRuleId.current = Math.max(nextAreaRuleId.current, highestNumericId + 1);
       } catch (error) {
-        console.error("[AutomaticTextureReplacer] Invalid saved area rules", error);
+        console.error("[ReplacementSolutions] Invalid saved area rules", error);
         areaRulesRef.current = [];
         setAreaRules([]);
       }
@@ -618,12 +618,12 @@ const register = (moduleRegistry) => {
     const persistRules = React.useCallback((nextRules) => {
       rulesRef.current = nextRules;
       setRules(nextRules);
-      trigger("automatictexturereplacer", "saveRules", JSON.stringify(nextRules));
+      trigger("replacementsolutions", "saveRules", JSON.stringify(nextRules));
     }, []);
     const persistAreaRules = React.useCallback((nextRules) => {
       areaRulesRef.current = nextRules;
       setAreaRules(nextRules);
-      trigger("automatictexturereplacer", "saveAreaRules", JSON.stringify(nextRules));
+      trigger("replacementsolutions", "saveAreaRules", JSON.stringify(nextRules));
     }, []);
     const deleteRule = React.useCallback((id, kind) => {
       if (kind === "areas") {
@@ -643,7 +643,7 @@ const register = (moduleRegistry) => {
       const selectedIds = side === "target"
         ? rule.targetSurfaceIds
         : kind === "areas" ? rule.sourceAreaIds : rule.sourceSurfaceIds;
-      trigger("automatictexturereplacer", "openSurfacePicker", JSON.stringify({
+      trigger("replacementsolutions", "openSurfacePicker", JSON.stringify({
         rowId: rule.id,
         side,
         kind,
@@ -675,7 +675,7 @@ const register = (moduleRegistry) => {
         const x = Math.max(0, Math.round(rect.left + e.clientX - startX));
         const y = Math.max(0, Math.round(rect.top + e.clientY - startY));
         setDragPosition({ x, y });
-        trigger("automatictexturereplacer", "setDialogPosition", x + "," + y);
+        trigger("replacementsolutions", "setDialogPosition", x + "," + y);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -704,9 +704,9 @@ const register = (moduleRegistry) => {
         if (fromLeft) {
           const x = Math.max(0, Math.round(startLeft + startWidth - width));
           setDragPosition((current) => ({ ...(current || position), x }));
-          trigger("automatictexturereplacer", "setDialogPosition", x + "," + position.y);
+          trigger("replacementsolutions", "setDialogPosition", x + "," + position.y);
         }
-        trigger("automatictexturereplacer", "setDialogSize", width + "," + height);
+        trigger("replacementsolutions", "setDialogSize", width + "," + height);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -763,7 +763,7 @@ const register = (moduleRegistry) => {
       "aria-label": "Surface replacement scope",
     }, scopeOptions.map(([value, label]) => {
       const selected = replacementScope === value;
-      return createButton(label, () => trigger("automatictexturereplacer", "setReplacementScope", value), {
+      return createButton(label, () => trigger("replacementsolutions", "setReplacementScope", value), {
         variant: "primary",
         className: "atrReplacementScopeOption" + (selected ? " atrReplacementScopeOptionSelected" : ""),
         buttonProps: { role: "radio", "aria-checked": selected, tabIndex: selected ? 0 : -1 },
@@ -776,12 +776,12 @@ const register = (moduleRegistry) => {
         checked: alsoNewBuildings,
         focusKey: FocusDisabled,
         className: "atrAlsoNewBuildingsCheckbox",
-        onChange: (checked) => trigger("automatictexturereplacer", "setAlsoNewBuildings", checked),
+        onChange: (checked) => trigger("replacementsolutions", "setAlsoNewBuildings", checked),
       })
       : h("input", {
         type: "checkbox",
         checked: alsoNewBuildings,
-        onChange: (event) => trigger("automatictexturereplacer", "setAlsoNewBuildings", event.target.checked),
+        onChange: (event) => trigger("replacementsolutions", "setAlsoNewBuildings", event.target.checked),
       });
     const alsoNewBuildingsControl = h("div", { className: "atrAlsoNewBuildingsControl" },
       h("span", null, "Also new buildings"),
@@ -799,7 +799,7 @@ const register = (moduleRegistry) => {
     const tabs = h("div", { className: "atrMainTabs", role: "tablist", "aria-label": "Replacement category" },
       [["surfaces", "Surfaces"], ["areas", "Areas"]].map(([tab, label]) => createButton(label, () => {
         setActiveTab(tab);
-        trigger("automatictexturereplacer", "setActiveMainTab", tab);
+        trigger("replacementsolutions", "setActiveMainTab", tab);
       }, {
         variant: "primary",
         className: "atrMainTab" + (activeTab === tab ? " atrMainTabSelected" : ""),
@@ -814,12 +814,12 @@ const register = (moduleRegistry) => {
       tabs,
       h("div", { className: "atrRulesToolbar" },
         h("div", { className: "atrRulesToolbarLeft" },
-          createButton("Replace All", () => trigger("automatictexturereplacer", replacementTrigger, ""), {
+          createButton("Replace All", () => trigger("replacementsolutions", replacementTrigger, ""), {
             variant: "primary",
             fontSize: scaledFontSize,
             style: BUTTON_STYLE.standard,
           }),
-          showRevertAllButton && createButton("Revert All", () => trigger("automatictexturereplacer", revertTrigger), {
+          showRevertAllButton && createButton("Revert All", () => trigger("replacementsolutions", revertTrigger), {
             variant: "primary",
             className: "atrRevertAllButton",
             fontSize: scaledFontSize,
@@ -856,16 +856,16 @@ const register = (moduleRegistry) => {
       return h("div", { className: "atrDialogPositioner", style, ref: dialogRef },
         h(ui.Panel, {
           className: "atrNativePanel",
-        header: h("div", { className: "atrDialogHeader", onMouseDownCapture: beginDrag }, "Automatic Texture Replacer"),
-          onClose: () => trigger("automatictexturereplacer", "closeDialog"),
+        header: h("div", { className: "atrDialogHeader", onMouseDownCapture: beginDrag }, "Replacement Solutions"),
+          onClose: () => trigger("replacementsolutions", "closeDialog"),
         }, body), resizeCorners);
     }
 
     return h("div", { className: "atrDialogPositioner", style, ref: dialogRef },
       h("section", { className: "atrFallbackPanel" },
         h("header", { className: "atrDialogHeader", onMouseDown: beginDrag },
-          h("span", null, "Automatic Texture Replacer"),
-          h("button", { className: "atrCloseButton", onMouseDown: (e) => e.stopPropagation(), onClick: () => trigger("automatictexturereplacer", "closeDialog"), title: "Close" }, "×")),
+          h("span", null, "Replacement Solutions"),
+          h("button", { className: "atrCloseButton", onMouseDown: (e) => e.stopPropagation(), onClick: () => trigger("replacementsolutions", "closeDialog"), title: "Close" }, "×")),
       body), resizeCorners);
   };
 

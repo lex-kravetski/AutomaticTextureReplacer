@@ -1,12 +1,12 @@
 <Publish>
 	<!-- Leave ModId empty until this mod has its own Paradox Mods listing. -->
 	<ModId Value="" />
-	<DisplayName Value="Automatic Texture Replacer" />
-	<ShortDescription Value="Automatically replaces selected textures in Cities: Skylines II." />
+	<DisplayName Value="Replacement Solutions" />
+	<ShortDescription Value="Replace building and industry-area surfaces using configurable rules." />
 	<LongDescription>
-# Automatic Texture Replacer
+# Replacement Solutions
 
-Project scaffold for a Cities: Skylines II mod that will automatically replace selected textures.
+Replace building, hand-drawn, and specialized-industry surfaces in Cities: Skylines II. Configure rules for existing areas or apply them automatically to new construction.
 
 <!-- Replace this text with the finished mod description before publishing. -->
 	</LongDescription>

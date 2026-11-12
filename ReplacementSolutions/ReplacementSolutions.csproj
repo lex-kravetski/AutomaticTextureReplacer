@@ -2,7 +2,7 @@
 
 	<PropertyGroup>
 		<Configurations>Debug;Release</Configurations>
-		<AssemblyName>AutomaticTextureReplacer</AssemblyName>
+		<AssemblyName>ReplacementSolutions</AssemblyName>
 		<PublishConfigurationPath>Properties\PublishConfiguration.xml</PublishConfigurationPath>
 	</PropertyGroup>
 
@@ -41,11 +41,11 @@
 		<None Include="$(ModTargetsFile)" Link="Properties\Mod.targets" />
 	</ItemGroup>
 
-	<Target Name="AutomaticTextureReplacerDeployUI" AfterTargets="DeployWIP">
+	<Target Name="ReplacementSolutionsDeployUI" AfterTargets="DeployWIP">
 		<ItemGroup>
-			<AutomaticTextureReplacerUIFiles Include="$(MSBuildProjectDirectory)\ui\**\*.*" />
+			<ReplacementSolutionsUIFiles Include="$(MSBuildProjectDirectory)\ui\**\*.*" />
 		</ItemGroup>
-		<Copy SourceFiles="@(AutomaticTextureReplacerUIFiles)" DestinationFiles="@(AutomaticTextureReplacerUIFiles->'$(DeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
+		<Copy SourceFiles="@(ReplacementSolutionsUIFiles)" DestinationFiles="@(ReplacementSolutionsUIFiles->'$(DeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
 	</Target>
 
 </Project>

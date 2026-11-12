@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace AutomaticTextureReplacer
 {
-    public sealed partial class AutomaticTextureReplacerUISystem : UISystemBase
+    public sealed partial class ReplacementSolutionsUISystem : UISystemBase
     {
         private ValueBinding<bool> m_DialogOpen;
         private ValueBinding<int> m_DialogX;
@@ -66,55 +66,55 @@ namespace AutomaticTextureReplacer
         {
             base.OnCreate();
 
-            AutomaticTextureReplacerSettings settings = Mod.Settings;
-            AddBinding(m_DialogOpen = new ValueBinding<bool>("automatictexturereplacer", "dialogOpen", settings?.DialogOpen ?? false));
-            AddBinding(m_DialogX = new ValueBinding<int>("automatictexturereplacer", "dialogX", settings?.DialogX ?? -1));
-            AddBinding(m_DialogY = new ValueBinding<int>("automatictexturereplacer", "dialogY", settings?.DialogY ?? -1));
-            AddBinding(m_DialogWidth = new ValueBinding<int>("automatictexturereplacer", "dialogWidth", settings?.DialogWidth ?? -1));
-            AddBinding(m_DialogHeight = new ValueBinding<int>("automatictexturereplacer", "dialogHeight", settings?.DialogHeight ?? -1));
-            AddBinding(m_DialogFontSize = new ValueBinding<int>("automatictexturereplacer", "dialogFontSize", settings?.DialogFontSize ?? 100));
+            ReplacementSolutionsSettings settings = Mod.Settings;
+            AddBinding(m_DialogOpen = new ValueBinding<bool>("replacementsolutions", "dialogOpen", settings?.DialogOpen ?? false));
+            AddBinding(m_DialogX = new ValueBinding<int>("replacementsolutions", "dialogX", settings?.DialogX ?? -1));
+            AddBinding(m_DialogY = new ValueBinding<int>("replacementsolutions", "dialogY", settings?.DialogY ?? -1));
+            AddBinding(m_DialogWidth = new ValueBinding<int>("replacementsolutions", "dialogWidth", settings?.DialogWidth ?? -1));
+            AddBinding(m_DialogHeight = new ValueBinding<int>("replacementsolutions", "dialogHeight", settings?.DialogHeight ?? -1));
+            AddBinding(m_DialogFontSize = new ValueBinding<int>("replacementsolutions", "dialogFontSize", settings?.DialogFontSize ?? 100));
             AddBinding(m_ReplacementScope = new ValueBinding<string>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "replacementScope",
                 settings?.ReplacementScope ?? "assets"));
             AddBinding(m_ActiveMainTab = new ValueBinding<string>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "activeMainTab",
                 settings?.ActiveMainTab ?? "surfaces"));
             AddBinding(m_AlsoNewBuildings = new ValueBinding<bool>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "alsoNewBuildings",
                 settings?.AlsoNewBuildings ?? false));
             AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "showInGameSurfacesAsTargets",
                 settings?.ShowInGameSurfacesAsTargets ?? false));
             AddBinding(m_ShowSpecialIndustrySurfacesAsTargets = new ValueBinding<bool>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "showSpecialIndustrySurfacesAsTargets",
                 settings?.ShowSpecialIndustrySurfacesAsTargets ?? false));
             AddBinding(m_ShowModSurfacesAsSources = new ValueBinding<bool>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "showModSurfacesAsSources",
                 settings?.ShowModSurfacesAsSources ?? false));
             AddBinding(m_ShowRevertAllButton = new ValueBinding<bool>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "showRevertAllButton",
                 settings?.ShowRevertAllButton ?? false));
-            AddBinding(m_SurfacePickerX = new ValueBinding<int>("automatictexturereplacer", "surfacePickerX", settings?.SurfacePickerX ?? -1));
-            AddBinding(m_SurfacePickerY = new ValueBinding<int>("automatictexturereplacer", "surfacePickerY", settings?.SurfacePickerY ?? -1));
-            AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("automatictexturereplacer", "surfacePickerWidth", settings?.SurfacePickerWidth ?? -1));
-            AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("automatictexturereplacer", "surfacePickerHeight", settings?.SurfacePickerHeight ?? -1));
-            AddBinding(m_SurfacePickerOpen = new ValueBinding<bool>("automatictexturereplacer", "surfacePickerOpen", settings?.SurfacePickerOpen ?? false));
-            AddBinding(m_SurfacePickerContext = new ValueBinding<string>("automatictexturereplacer", "surfacePickerContext", settings?.SurfacePickerContextJson ?? ""));
+            AddBinding(m_SurfacePickerX = new ValueBinding<int>("replacementsolutions", "surfacePickerX", settings?.SurfacePickerX ?? -1));
+            AddBinding(m_SurfacePickerY = new ValueBinding<int>("replacementsolutions", "surfacePickerY", settings?.SurfacePickerY ?? -1));
+            AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("replacementsolutions", "surfacePickerWidth", settings?.SurfacePickerWidth ?? -1));
+            AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("replacementsolutions", "surfacePickerHeight", settings?.SurfacePickerHeight ?? -1));
+            AddBinding(m_SurfacePickerOpen = new ValueBinding<bool>("replacementsolutions", "surfacePickerOpen", settings?.SurfacePickerOpen ?? false));
+            AddBinding(m_SurfacePickerContext = new ValueBinding<string>("replacementsolutions", "surfacePickerContext", settings?.SurfacePickerContextJson ?? ""));
             AddBinding(m_SurfacePickerCollapsedGroups = new ValueBinding<string>(
-                "automatictexturereplacer",
+                "replacementsolutions",
                 "surfacePickerCollapsedGroups",
                 settings?.SurfacePickerCollapsedGroupsJson ?? "{}"));
-            AddBinding(m_SurfaceCatalog = new ValueBinding<string>("automatictexturereplacer", "surfaceCatalog", "[]"));
-            AddBinding(m_AreaCatalog = new ValueBinding<string>("automatictexturereplacer", "areaCatalog", "[]"));
-            AddBinding(m_RulesJson = new ValueBinding<string>("automatictexturereplacer", "rulesJson", settings?.RulesJson ?? "[]"));
-            AddBinding(m_AreaRulesJson = new ValueBinding<string>("automatictexturereplacer", "areaRulesJson", settings?.AreaRulesJson ?? "[]"));
+            AddBinding(m_SurfaceCatalog = new ValueBinding<string>("replacementsolutions", "surfaceCatalog", "[]"));
+            AddBinding(m_AreaCatalog = new ValueBinding<string>("replacementsolutions", "areaCatalog", "[]"));
+            AddBinding(m_RulesJson = new ValueBinding<string>("replacementsolutions", "rulesJson", settings?.RulesJson ?? "[]"));
+            AddBinding(m_AreaRulesJson = new ValueBinding<string>("replacementsolutions", "areaRulesJson", settings?.AreaRulesJson ?? "[]"));
 
             m_SurfaceQuery = GetEntityQuery(
                 new EntityQueryDesc
@@ -133,25 +133,25 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
-            AddBinding(new TriggerBinding("automatictexturereplacer", "toggleDialog", () =>
+            AddBinding(new TriggerBinding("replacementsolutions", "toggleDialog", () =>
                 SetDialogOpen(Mod.Settings != null && !Mod.Settings.DialogOpen)));
-            AddBinding(new TriggerBinding("automatictexturereplacer", "closeDialog", () => SetDialogOpen(false)));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setDialogPosition", SetDialogPosition));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setDialogSize", SetDialogSize));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "openSurfacePicker", OpenSurfacePicker));
-            AddBinding(new TriggerBinding("automatictexturereplacer", "closeSurfacePicker", CloseSurfacePicker));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveRules", SetRulesJson));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveAreaRules", SetAreaRulesJson));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceSurfaces", ReplaceSurfaces));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "replaceAreas", ReplaceAreas));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setReplacementScope", SetReplacementScope));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setActiveMainTab", SetActiveMainTab));
-            AddBinding(new TriggerBinding<bool>("automatictexturereplacer", "setAlsoNewBuildings", SetAlsoNewBuildings));
-            AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllSurfaces", RevertAllSurfaces));
-            AddBinding(new TriggerBinding("automatictexturereplacer", "revertAllAreas", () => SurfaceReplacementSystem.QueueAreaRevertAll()));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerPosition", SetSurfacePickerPosition));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "setSurfacePickerSize", SetSurfacePickerSize));
-            AddBinding(new TriggerBinding<string>("automatictexturereplacer", "saveSurfacePickerCollapsedGroups", SetSurfacePickerCollapsedGroups));
+            AddBinding(new TriggerBinding("replacementsolutions", "closeDialog", () => SetDialogOpen(false)));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setDialogPosition", SetDialogPosition));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setDialogSize", SetDialogSize));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "openSurfacePicker", OpenSurfacePicker));
+            AddBinding(new TriggerBinding("replacementsolutions", "closeSurfacePicker", CloseSurfacePicker));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "saveRules", SetRulesJson));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "saveAreaRules", SetAreaRulesJson));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "replaceSurfaces", ReplaceSurfaces));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "replaceAreas", ReplaceAreas));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setReplacementScope", SetReplacementScope));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setActiveMainTab", SetActiveMainTab));
+            AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewBuildings", SetAlsoNewBuildings));
+            AddBinding(new TriggerBinding("replacementsolutions", "revertAllSurfaces", RevertAllSurfaces));
+            AddBinding(new TriggerBinding("replacementsolutions", "revertAllAreas", () => SurfaceReplacementSystem.QueueAreaRevertAll()));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfacePickerPosition", SetSurfacePickerPosition));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfacePickerSize", SetSurfacePickerSize));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "saveSurfacePickerCollapsedGroups", SetSurfacePickerCollapsedGroups));
         }
 
         protected override void OnUpdate()
@@ -479,10 +479,10 @@ namespace AutomaticTextureReplacer
                         ["id"] = id,
                         ["name"] = name,
                         ["thumbnail"] = isTransparentSurface
-                            ? "coui://automatictexturereplacer/images/TransparentSurface.svg"
+                            ? "coui://replacementsolutions/images/TransparentSurface.svg"
                             : GetSurfaceThumbnail(prefab),
                         ["tooltipThumbnail"] = isTransparentSurface
-                            ? "coui://automatictexturereplacer/images/TransparentSurface.svg"
+                            ? "coui://replacementsolutions/images/TransparentSurface.svg"
                             : GetLargeThumbnail(prefab),
                         ["group"] = group,
                         ["menuPath"] = menuPath,

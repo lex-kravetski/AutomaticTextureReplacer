@@ -3132,7 +3132,7 @@ namespace AutomaticTextureReplacer
                 return true;
             }
 
-            string cloneName = originalPrefab.name + " - Automatic Texture Replacer Transparent";
+            string cloneName = originalPrefab.name + " - Replacement Solutions Transparent";
             PrefabBase clone = originalPrefab.Clone(cloneName);
             if (clone == null || !clone.TryGet<RenderedArea>(out RenderedArea cloneRendered) || cloneRendered == null)
             {

@@ -7,7 +7,7 @@ namespace AutomaticTextureReplacer
 {
     internal static class ReplacementRuleCatalog
     {
-        public const string TransparentSurfacePrefabName = "Automatic Texture Replacer - Transparent Surface";
+        public const string TransparentSurfacePrefabName = "Replacement Solutions - Transparent Surface";
         public const string TransparentSurfaceTemplateName = "Missing Area";
         public const string TransparentSurfaceDisplayName = "Transparent Surface (Pseudo-delete)";
 
