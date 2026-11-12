@@ -2315,7 +2315,6 @@ namespace AutomaticTextureReplacer
                                     TargetSurfacePrefab = targetSurface,
                                 });
                             }
-                            QueueBatchDiagnostic(childArea, oldPrefabRef.m_Prefab, targetSurface, sourceLabel, m_PrefabSystem.GetPrefabName(targetSurface));
                             areasQueued++;
                             hasUpdateCommandBuffer = true;
                         }
