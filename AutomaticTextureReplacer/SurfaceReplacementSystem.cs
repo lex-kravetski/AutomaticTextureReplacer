@@ -623,14 +623,12 @@ namespace AutomaticTextureReplacer
 
                         string sourceName = m_PrefabSystem.GetPrefabName(request.SourcePrefab);
                         string targetName = m_PrefabSystem.GetPrefabName(request.TargetPrefab);
-                        QueueBatchDiagnostic(area, request.SourcePrefab, request.TargetPrefab, sourceName, targetName);
                         // The construction path changes the prefab before the area
                         // is created, so it does not pass through ProcessReplacement.
                         // Apply the source edge settings here as well; otherwise a
                         // mod surface can retain its larger edge expansion and spill
                         // over adjacent roads.
-                        ClearReplacementAreaExpansion(area);
-                        CopyReplacementEdgeMaterialSettings(request.SourcePrefab, request.TargetPrefab);
+                        PrepareSurfaceReplacement(area, request.SourcePrefab, request.TargetPrefab, sourceName, targetName);
                         request.SurfaceAreaObserved = true;
                     }
                 }
@@ -1439,15 +1437,20 @@ namespace AutomaticTextureReplacer
                 }
             }
 
+            PrepareSurfaceReplacement(area, sourcePrefab, targetPrefab, sourceName, targetName);
             commandBuffer.SetComponent(area, new PrefabRef { m_Prefab = targetPrefab });
-            ClearReplacementAreaExpansion(area);
-            CopyReplacementEdgeMaterialSettings(sourcePrefab, targetPrefab);
             if (!EntityManager.HasComponent<Updated>(area))
             {
                 commandBuffer.AddComponent<Updated>(area);
             }
-            QueueBatchDiagnostic(area, sourcePrefab, targetPrefab, sourceName, targetName);
             return true;
+        }
+
+        private void PrepareSurfaceReplacement(Entity area, Entity sourcePrefab, Entity targetPrefab, string sourceName, string targetName)
+        {
+            ClearReplacementAreaExpansion(area);
+            CopyReplacementEdgeMaterialSettings(sourcePrefab, targetPrefab);
+            QueueBatchDiagnostic(area, sourcePrefab, targetPrefab, sourceName, targetName);
         }
 
         private void ClearReplacementAreaExpansion(Entity area)
