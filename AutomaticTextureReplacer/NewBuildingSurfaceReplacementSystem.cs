@@ -18,14 +18,6 @@ namespace AutomaticTextureReplacer
     /// </summary>
     public sealed partial class NewBuildingSurfaceReplacementSystem : GameSystemBase
     {
-        public sealed class ReplacementRule
-        {
-            public int id { get; set; }
-            public bool enabled { get; set; }
-            public List<string> sourceSurfaceIds { get; set; } = new List<string>();
-            public List<string> targetSurfaceIds { get; set; } = new List<string>();
-        }
-
         private EntityQuery m_SurfacePrefabQuery;
         private EntityQuery m_AllPrefabQuery;
         private EntityQuery m_CreationDefinitionQuery;
@@ -377,10 +369,11 @@ namespace AutomaticTextureReplacer
             m_TargetsBySource.Clear();
             m_TargetsByIndustryType.Clear();
 
-            List<ReplacementRule> rules;
+            List<SurfaceReplacementSystem.SurfaceReplacementRule> rules;
             try
             {
-                rules = JSON.MakeInto<List<ReplacementRule>>(JSON.Load(rulesJson)) ?? new List<ReplacementRule>();
+                rules = JSON.MakeInto<List<SurfaceReplacementSystem.SurfaceReplacementRule>>(JSON.Load(rulesJson)) ??
+                        new List<SurfaceReplacementSystem.SurfaceReplacementRule>();
             }
             catch (Exception exception)
             {
@@ -411,43 +404,25 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            Dictionary<Entity, HashSet<Entity>> distinctTargetsBySource = new Dictionary<Entity, HashSet<Entity>>();
-            foreach (ReplacementRule rule in rules)
+            Dictionary<string, HashSet<string>> targetIdsBySource = ReplacementRuleCatalog.BuildSurfaceTargetIds(
+                rules,
+                surfacesById,
+                enabledOnly: true);
+            foreach (KeyValuePair<string, HashSet<string>> pair in targetIdsBySource)
             {
-                if (rule == null || !rule.enabled || rule.sourceSurfaceIds == null || rule.targetSurfaceIds == null)
+                if (!surfacesById.TryGetValue(pair.Key, out Entity source) || pair.Value.Count == 0)
                 {
                     continue;
                 }
 
-                foreach (string sourceId in rule.sourceSurfaceIds)
+                List<Entity> targets = pair.Value
+                    .Where(surfacesById.ContainsKey)
+                    .Select(targetId => surfacesById[targetId])
+                    .Where(target => EntityManager.HasComponent<SurfaceData>(target))
+                    .ToList();
+                if (targets.Count > 0)
                 {
-                    if (string.IsNullOrEmpty(sourceId) || !surfacesById.TryGetValue(sourceId, out Entity source))
-                    {
-                        continue;
-                    }
-
-                    if (!distinctTargetsBySource.TryGetValue(source, out HashSet<Entity> targets))
-                    {
-                        targets = new HashSet<Entity>();
-                        distinctTargetsBySource.Add(source, targets);
-                    }
-
-                    foreach (string targetId in rule.targetSurfaceIds)
-                    {
-                        if (!string.IsNullOrEmpty(targetId) && surfacesById.TryGetValue(targetId, out Entity target) &&
-                            target != source && EntityManager.HasComponent<SurfaceData>(target))
-                        {
-                            targets.Add(target);
-                        }
-                    }
-                }
-            }
-
-            foreach (KeyValuePair<Entity, HashSet<Entity>> pair in distinctTargetsBySource)
-            {
-                if (pair.Value.Count > 0)
-                {
-                    m_TargetsBySource.Add(pair.Key, pair.Value.ToList());
+                    m_TargetsBySource[source] = targets;
                 }
             }
 
@@ -475,25 +450,27 @@ namespace AutomaticTextureReplacer
                 areaRules = new List<SurfaceReplacementSystem.AreaReplacementRule>();
             }
 
-            var distinctIndustryTargets = new Dictionary<Entity, HashSet<Entity>>();
-            foreach (SurfaceReplacementSystem.AreaReplacementRule rule in areaRules)
+            Dictionary<string, HashSet<string>> targetIdsByIndustry = ReplacementRuleCatalog.BuildIndustryTargetIds(
+                areaRules,
+                prefabsById,
+                surfacesById,
+                enabledOnly: true);
+            foreach (KeyValuePair<string, HashSet<string>> pair in targetIdsByIndustry)
             {
-                if (rule == null || !rule.enabled || rule.sourceAreaIds == null || rule.targetSurfaceIds == null)
-                    continue;
-                foreach (string sourceId in rule.sourceAreaIds)
+                if (!prefabsById.TryGetValue(pair.Key, out Entity sourceType))
                 {
-                    if (string.IsNullOrEmpty(sourceId) || !prefabsById.TryGetValue(sourceId, out Entity sourceType))
-                        continue;
-                    if (!distinctIndustryTargets.TryGetValue(sourceType, out HashSet<Entity> targets))
-                        distinctIndustryTargets.Add(sourceType, targets = new HashSet<Entity>());
-                    foreach (string targetId in rule.targetSurfaceIds)
-                        if (!string.IsNullOrEmpty(targetId) && surfacesById.TryGetValue(targetId, out Entity target))
-                            targets.Add(target);
+                    continue;
+                }
+
+                List<Entity> targets = pair.Value
+                    .Where(surfacesById.ContainsKey)
+                    .Select(targetId => surfacesById[targetId])
+                    .ToList();
+                if (targets.Count > 0)
+                {
+                    m_TargetsByIndustryType[sourceType] = targets;
                 }
             }
-
-            foreach (KeyValuePair<Entity, HashSet<Entity>> pair in distinctIndustryTargets)
-                if (pair.Value.Count > 0) m_TargetsByIndustryType.Add(pair.Key, pair.Value.ToList());
 
             Mod.Log.InfoFormat(
                 "New construction replacement maps cached: prefabCount={0}, surfaceSources={1}, surfaceMappings={2}, industryTypes={3}, industryMappings={4}",

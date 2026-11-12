@@ -1435,6 +1435,33 @@ namespace AutomaticTextureReplacer
             return true;
         }
 
+        private bool ApplySurfacePrefabReplacement(
+            Entity area,
+            Entity targetPrefab,
+            EntityCommandBuffer commandBuffer,
+            Entity originalSpecialIndustryPrefab = default,
+            string sourceNameOverride = null)
+        {
+            if (area == Entity.Null || !EntityManager.Exists(area) ||
+                !EntityManager.HasComponent<PrefabRef>(area))
+            {
+                return false;
+            }
+
+            Entity sourcePrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+            string sourceName = string.IsNullOrEmpty(sourceNameOverride)
+                ? m_PrefabSystem.GetPrefabName(sourcePrefab)
+                : sourceNameOverride;
+            return ApplySurfacePrefabReplacement(
+                area,
+                sourcePrefab,
+                targetPrefab,
+                commandBuffer,
+                sourceName,
+                m_PrefabSystem.GetPrefabName(targetPrefab),
+                originalSpecialIndustryPrefab);
+        }
+
         private void PrepareSurfaceReplacement(Entity area, Entity sourcePrefab, Entity targetPrefab, string sourceName, string targetName)
         {
             ClearReplacementAreaExpansion(area);
@@ -1894,7 +1921,6 @@ namespace AutomaticTextureReplacer
 
             LogSpecialIndustryAreaInventory(operationId);
 
-            Dictionary<string, HashSet<string>> targetIdsBySource = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             foreach (SurfaceReplacementRule rule in rules)
             {
                 if (rule == null)
@@ -1925,33 +1951,13 @@ namespace AutomaticTextureReplacer
                     continue;
                 }
 
-                foreach (string sourceId in rule.sourceSurfaceIds)
-                {
-                    if (string.IsNullOrEmpty(sourceId))
-                    {
-                        continue;
-                    }
-
-                    if (!targetIdsBySource.TryGetValue(sourceId, out HashSet<string> targetIds))
-                    {
-                        targetIds = new HashSet<string>(StringComparer.Ordinal);
-                        targetIdsBySource.Add(sourceId, targetIds);
-                    }
-
-                    foreach (string targetId in rule.targetSurfaceIds)
-                    {
-                        if (!string.IsNullOrEmpty(targetId) && surfaceEntitiesById.TryGetValue(targetId, out Entity targetEntity) &&
-                            EntityManager.HasComponent<SurfaceData>(targetEntity))
-                        {
-                            targetIds.Add(targetId);
-                        }
-                        else
-                        {
-                            Mod.Log.WarnFormat("Replacement rule id={0}: target surface id '{1}' is not in the current catalog", rule.id, targetId ?? "<null>");
-                        }
-                    }
-                }
             }
+
+            Dictionary<string, HashSet<string>> targetIdsBySource = ReplacementRuleCatalog.BuildSurfaceTargetIds(
+                rules,
+                surfaceEntitiesById,
+                enabledOnly: !replaceSingleRule,
+                selectedRuleId: replaceSingleRule ? selectedRuleId : (int?)null);
 
             Dictionary<string, List<Entity>> replacementsBySource = new Dictionary<string, List<Entity>>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, HashSet<string>> pair in targetIdsBySource)
@@ -2062,11 +2068,9 @@ namespace AutomaticTextureReplacer
                         : Entity.Null;
                     ApplySurfacePrefabReplacement(
                         areaEntity,
-                        prefabRef.m_Prefab,
                         replacement,
                         updateCommandBuffer,
-                        sourceName,
-                        m_PrefabSystem.GetPrefabName(replacement));
+                        sourceNameOverride: sourceName);
                     hasUpdateCommandBuffer = true;
                     scheduledAreas.Add(areaEntity);
 
