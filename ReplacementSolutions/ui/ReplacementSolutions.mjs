@@ -705,7 +705,7 @@ const register = (moduleRegistry) => {
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", end);
         const width = Math.max(minimumDialogWidth, Math.min(1600, Math.round(startWidth + horizontalDelta(e))));
-        const height = Math.max(200, Math.min(1200, Math.round(startHeight + e.clientY - startY)));
+        const height = Math.max(200, Math.round(startHeight + e.clientY - startY));
         setSize({ width, height });
         if (fromLeft) {
           const x = Math.max(0, Math.round(startLeft + startWidth - width));
