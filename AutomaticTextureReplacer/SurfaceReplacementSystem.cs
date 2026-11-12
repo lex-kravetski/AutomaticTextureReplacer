@@ -71,6 +71,29 @@ namespace AutomaticTextureReplacer
             public Entity CurrentTargetSurface;
         }
 
+        private readonly struct IndustryOverlayReplacementContext
+        {
+            public readonly Entity IndustryRoot;
+            public readonly Entity IndustryPrefab;
+            public readonly Entity TargetSurfacePrefab;
+            public readonly EntityCommandBuffer CommandBuffer;
+            public readonly long OperationId;
+
+            public IndustryOverlayReplacementContext(
+                Entity industryRoot,
+                Entity industryPrefab,
+                Entity targetSurfacePrefab,
+                EntityCommandBuffer commandBuffer,
+                long operationId)
+            {
+                IndustryRoot = industryRoot;
+                IndustryPrefab = industryPrefab;
+                TargetSurfacePrefab = targetSurfacePrefab;
+                CommandBuffer = commandBuffer;
+                OperationId = operationId;
+            }
+        }
+
         public struct SpecialIndustryLotReplacement : IComponentData
         {
             public Entity OriginalPrefab;
@@ -118,6 +141,7 @@ namespace AutomaticTextureReplacer
         private int m_ConstructionRefreshGeneration = -1;
 
         private EntityQuery m_SurfacePrefabQuery;
+        private EntityQuery m_AllPrefabQuery;
         private EntityQuery m_SurfaceAreaQuery;
         private EntityQuery m_NewBuildingSurfaceQuery;
         private EntityQuery m_TempConstructionSurfaceQuery;
@@ -320,6 +344,7 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<ExtractorAreaData>(),
                     },
                 });
+            m_AllPrefabQuery = GetEntityQuery(ComponentType.ReadOnly<PrefabData>());
             m_SurfaceAreaQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -2155,7 +2180,6 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            Dictionary<string, HashSet<Entity>> targetsByIndustryId = new Dictionary<string, HashSet<Entity>>(StringComparer.Ordinal);
             foreach (AreaReplacementRule rule in rules)
             {
                 if (rule == null || (replaceSingleRule ? rule.id != selectedId : !rule.enabled))
@@ -2170,31 +2194,41 @@ namespace AutomaticTextureReplacer
                     string.Join(", ", rule.sourceAreaIds ?? new List<string>()),
                     string.Join(", ", (rule.targetSurfaceIds ?? new List<string>()).Select(id => surfaceEntitiesById.TryGetValue(id, out Entity entity) ? m_PrefabSystem.GetPrefabName(entity) : id)));
 
-                if (rule.sourceAreaIds == null || rule.targetSurfaceIds == null)
-                {
-                    continue;
-                }
+            }
 
-                foreach (string industryId in rule.sourceAreaIds.Where(id => !string.IsNullOrEmpty(id)))
+            Dictionary<string, Entity> industriesById = new Dictionary<string, Entity>(StringComparer.Ordinal);
+            using (NativeArray<Entity> prefabEntities = m_AllPrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity prefabEntity in prefabEntities)
                 {
-                    if (!targetsByIndustryId.TryGetValue(industryId, out HashSet<Entity> targets))
+                    if (!m_PrefabSystem.TryGetPrefab<PrefabBase>(prefabEntity, out PrefabBase prefab) || prefab == null)
                     {
-                        targets = new HashSet<Entity>();
-                        targetsByIndustryId.Add(industryId, targets);
+                        continue;
                     }
 
-                    foreach (string targetId in rule.targetSurfaceIds)
+                    string id = prefab.GetPrefabID().ToString();
+                    if (!industriesById.ContainsKey(id))
                     {
-                        if (!string.IsNullOrEmpty(targetId) && surfaceEntitiesById.TryGetValue(targetId, out Entity target))
-                        {
-                            targets.Add(target);
-                        }
+                        industriesById.Add(id, prefabEntity);
                     }
                 }
             }
 
-            Dictionary<string, List<Entity>> replacementTargets = targetsByIndustryId
-                .Select(pair => new { pair.Key, Targets = pair.Value.ToList() })
+            Dictionary<string, HashSet<string>> targetIdsByIndustry = ReplacementRuleCatalog.BuildIndustryTargetIds(
+                rules,
+                industriesById,
+                surfaceEntitiesById,
+                enabledOnly: !replaceSingleRule,
+                selectedRuleId: replaceSingleRule ? selectedId : (int?)null);
+            Dictionary<string, List<Entity>> replacementTargets = targetIdsByIndustry
+                .Select(pair => new
+                {
+                    pair.Key,
+                    Targets = pair.Value
+                        .Where(surfaceEntitiesById.ContainsKey)
+                        .Select(id => surfaceEntitiesById[id])
+                        .ToList(),
+                })
                 .Where(pair => pair.Targets.Count > 0)
                 .ToDictionary(pair => pair.Key, pair => pair.Targets, StringComparer.Ordinal);
             if (replacementTargets.Count == 0)
@@ -2980,13 +3014,28 @@ namespace AutomaticTextureReplacer
             return true;
         }
 
+        private bool TryQueueIndustrySurfaceOverlay(IndustryOverlayReplacementContext context)
+        {
+            return TryQueueIndustrySurfaceOverlay(
+                context.IndustryRoot,
+                context.IndustryPrefab,
+                context.TargetSurfacePrefab,
+                context.CommandBuffer,
+                context.OperationId);
+        }
+
         private void SynchronizeIndustrySurfaceOverlay(Entity industryRoot, EntityCommandBuffer commandBuffer)
         {
             SpecialIndustrySurfaceOverlayState state = EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(industryRoot);
             Entity overlay = FindIndustrySurfaceOverlay(industryRoot, state.TargetSurfacePrefab);
             if (overlay == Entity.Null)
             {
-                TryQueueIndustrySurfaceOverlay(industryRoot, state.OriginalIndustryPrefab, state.TargetSurfacePrefab, commandBuffer, ++m_NextOperationId);
+                TryQueueIndustrySurfaceOverlay(new IndustryOverlayReplacementContext(
+                    industryRoot,
+                    state.OriginalIndustryPrefab,
+                    state.TargetSurfacePrefab,
+                    commandBuffer,
+                    ++m_NextOperationId));
                 return;
             }
 
