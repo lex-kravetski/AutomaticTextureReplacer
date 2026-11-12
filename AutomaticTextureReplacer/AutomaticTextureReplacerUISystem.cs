@@ -10,11 +10,13 @@ using Game.Areas;
 using Game.Common;
 using Game.Modding;
 using Game.Prefabs;
+using Game.Rendering;
 using Game.SceneFlow;
 using Game.Tools;
 using Game.UI;
 using Unity.Collections;
 using Unity.Entities;
+using UnityEngine;
 
 namespace AutomaticTextureReplacer
 {
@@ -51,6 +53,9 @@ namespace AutomaticTextureReplacer
         private bool? m_LastShowModSurfacesAsSources;
         private bool? m_LastShowRevertAllButton;
         private bool m_SurfaceCatalogBuildStarted;
+        private Entity m_TransparentSurfaceEntity;
+        private bool m_TransparentSurfaceInitializationAttempted;
+        private AreaBatchSystem m_AreaBatchSystem;
         private Task<string> m_SurfaceCatalogBuildTask;
         private Task<string> m_AreaCatalogBuildTask;
         private int m_SurfaceCatalogSurfaceCount;
@@ -62,11 +67,11 @@ namespace AutomaticTextureReplacer
             base.OnCreate();
 
             AutomaticTextureReplacerSettings settings = Mod.Settings;
-            AddBinding(m_DialogOpen = new ValueBinding<bool>("automatictexturereplacer", "dialogOpen", settings?.DialogOpen ?? true));
+            AddBinding(m_DialogOpen = new ValueBinding<bool>("automatictexturereplacer", "dialogOpen", settings?.DialogOpen ?? false));
             AddBinding(m_DialogX = new ValueBinding<int>("automatictexturereplacer", "dialogX", settings?.DialogX ?? -1));
             AddBinding(m_DialogY = new ValueBinding<int>("automatictexturereplacer", "dialogY", settings?.DialogY ?? -1));
-            AddBinding(m_DialogWidth = new ValueBinding<int>("automatictexturereplacer", "dialogWidth", settings?.DialogWidth ?? 440));
-            AddBinding(m_DialogHeight = new ValueBinding<int>("automatictexturereplacer", "dialogHeight", settings?.DialogHeight ?? 300));
+            AddBinding(m_DialogWidth = new ValueBinding<int>("automatictexturereplacer", "dialogWidth", settings?.DialogWidth ?? -1));
+            AddBinding(m_DialogHeight = new ValueBinding<int>("automatictexturereplacer", "dialogHeight", settings?.DialogHeight ?? -1));
             AddBinding(m_DialogFontSize = new ValueBinding<int>("automatictexturereplacer", "dialogFontSize", settings?.DialogFontSize ?? 100));
             AddBinding(m_ReplacementScope = new ValueBinding<string>(
                 "automatictexturereplacer",
@@ -98,8 +103,8 @@ namespace AutomaticTextureReplacer
                 settings?.ShowRevertAllButton ?? false));
             AddBinding(m_SurfacePickerX = new ValueBinding<int>("automatictexturereplacer", "surfacePickerX", settings?.SurfacePickerX ?? -1));
             AddBinding(m_SurfacePickerY = new ValueBinding<int>("automatictexturereplacer", "surfacePickerY", settings?.SurfacePickerY ?? -1));
-            AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("automatictexturereplacer", "surfacePickerWidth", settings?.SurfacePickerWidth ?? 920));
-            AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("automatictexturereplacer", "surfacePickerHeight", settings?.SurfacePickerHeight ?? 680));
+            AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("automatictexturereplacer", "surfacePickerWidth", settings?.SurfacePickerWidth ?? -1));
+            AddBinding(m_SurfacePickerHeight = new ValueBinding<int>("automatictexturereplacer", "surfacePickerHeight", settings?.SurfacePickerHeight ?? -1));
             AddBinding(m_SurfacePickerOpen = new ValueBinding<bool>("automatictexturereplacer", "surfacePickerOpen", settings?.SurfacePickerOpen ?? false));
             AddBinding(m_SurfacePickerContext = new ValueBinding<string>("automatictexturereplacer", "surfacePickerContext", settings?.SurfacePickerContextJson ?? ""));
             AddBinding(m_SurfacePickerCollapsedGroups = new ValueBinding<string>(
@@ -404,6 +409,7 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
+            EnsureTransparentSurfacePrefab(prefabSystem);
             m_SurfaceCatalogBuildStarted = true;
             StartAreaCatalogBuild(prefabSystem);
             List<Dictionary<string, string>> catalog = new List<Dictionary<string, string>>();
@@ -434,7 +440,8 @@ namespace AutomaticTextureReplacer
 
                     string id = prefab.GetPrefabID().ToString();
                     string name = prefab.name ?? id;
-                    if (IsExcludedSurfaceName(name))
+                    bool isTransparentSurface = ReplacementRuleCatalog.IsTransparentSurface(name);
+                    if (IsExcludedSurfaceName(name) && !isTransparentSurface)
                     {
                         continue;
                     }
@@ -444,8 +451,12 @@ namespace AutomaticTextureReplacer
                         continue;
                     }
 
-                    string group = GetSurfaceGroup(prefab);
-                    string menuPath = GetSurfaceMenuPath(prefab);
+                    if (isTransparentSurface)
+                    {
+                        name = ReplacementRuleCatalog.TransparentSurfaceDisplayName;
+                    }
+                    string group = isTransparentSurface ? "In-game" : GetSurfaceGroup(prefab);
+                    string menuPath = isTransparentSurface ? "In-game / Transparent Surface" : GetSurfaceMenuPath(prefab);
                     bool isMod = !prefab.isBuiltin && IsOwnedByMod(prefab);
                     if (isMod)
                     {
@@ -467,8 +478,12 @@ namespace AutomaticTextureReplacer
                     {
                         ["id"] = id,
                         ["name"] = name,
-                        ["thumbnail"] = GetSurfaceThumbnail(prefab),
-                        ["tooltipThumbnail"] = GetLargeThumbnail(prefab),
+                        ["thumbnail"] = isTransparentSurface
+                            ? "coui://automatictexturereplacer/images/TransparentSurface.svg"
+                            : GetSurfaceThumbnail(prefab),
+                        ["tooltipThumbnail"] = isTransparentSurface
+                            ? "coui://automatictexturereplacer/images/TransparentSurface.svg"
+                            : GetLargeThumbnail(prefab),
                         ["group"] = group,
                         ["menuPath"] = menuPath,
                         ["isMod"] = isMod.ToString(),
@@ -488,6 +503,142 @@ namespace AutomaticTextureReplacer
                 .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
                 .ToList())
                 .ContinueWith(task => JSON.Dump(task.GetAwaiter().GetResult()), TaskScheduler.Default);
+        }
+
+        private void EnsureTransparentSurfacePrefab(PrefabSystem prefabSystem)
+        {
+            if (m_TransparentSurfaceInitializationAttempted)
+            {
+                return;
+            }
+
+            m_TransparentSurfaceInitializationAttempted = true;
+            m_AreaBatchSystem = World.GetOrCreateSystemManaged<AreaBatchSystem>();
+            try
+            {
+                using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+                {
+                    foreach (Entity entity in entities)
+                    {
+                        if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab existing) ||
+                            existing == null ||
+                            !ReplacementRuleCatalog.IsTransparentSurface(existing.name))
+                        {
+                            continue;
+                        }
+
+                        m_TransparentSurfaceEntity = entity;
+                        return;
+                    }
+
+                    SurfacePrefab template = null;
+                    Entity templateEntity = Entity.Null;
+                    foreach (Entity entity in entities)
+                    {
+                        if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab candidate) || candidate == null ||
+                            !string.Equals(candidate.name, ReplacementRuleCatalog.TransparentSurfaceTemplateName, StringComparison.OrdinalIgnoreCase) ||
+                            !candidate.TryGet<RenderedArea>(out RenderedArea rendered) || rendered == null)
+                        {
+                            continue;
+                        }
+
+                        template = candidate;
+                        templateEntity = entity;
+                        break;
+                    }
+
+                    // Missing Area is the intended structural template. Keep a
+                    // fallback for game versions/mod combinations where it is not
+                    // exposed through the prefab query.
+                    if (template == null)
+                    foreach (Entity entity in entities)
+                    {
+                        if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab candidate) || candidate == null ||
+                            candidate.TryGet<RenderedArea>(out RenderedArea rendered) == false || rendered == null)
+                        {
+                            continue;
+                        }
+
+                        template = candidate;
+                        templateEntity = entity;
+                        break;
+                    }
+
+                    if (template == null)
+                    {
+                        Mod.Log.Warn("Transparent surface initialization skipped: no RenderedArea surface template found");
+                        return;
+                    }
+
+                    SurfacePrefab transparent = (SurfacePrefab)template.Clone(ReplacementRuleCatalog.TransparentSurfacePrefabName);
+                    transparent.Remove<UIObject>();
+                    if (!transparent.TryGet<RenderedArea>(out RenderedArea transparentRendered) || transparentRendered == null)
+                    {
+                        Mod.Log.Warn("Transparent surface initialization skipped: cloned template has no RenderedArea");
+                        return;
+                    }
+
+                    transparentRendered.m_Version = RenderedArea.Version.OverrideMaterial;
+                    transparentRendered.m_BaseColor = Color.clear;
+                    transparent.m_Color = Color.clear;
+                    transparent.m_EdgeColor = Color.clear;
+                    transparent.m_SelectionColor = Color.clear;
+                    transparent.m_SelectionEdgeColor = Color.clear;
+
+                    Material sourceMaterial = transparentRendered.m_Material;
+                    if (sourceMaterial == null && EntityManager.HasComponent<RenderedAreaData>(templateEntity))
+                    {
+                        int batchIndex = EntityManager.GetComponentData<RenderedAreaData>(templateEntity).m_BatchIndex;
+                        if (m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material batchMaterial, out _, out _, out _) &&
+                            batchMaterial != null)
+                        {
+                            sourceMaterial = batchMaterial;
+                        }
+                    }
+
+                    if (sourceMaterial != null)
+                    {
+                        Material transparentMaterial = new Material(sourceMaterial)
+                        {
+                            name = "ATR Transparent Surface Material",
+                            renderQueue = 3000,
+                        };
+                        transparentMaterial.SetColor("_BaseColor", Color.clear);
+                        transparentMaterial.SetFloat("_SurfaceType", 1f);
+                        transparentMaterial.SetFloat("_AlphaCutoffEnable", 0f);
+                        transparentMaterial.SetFloat("_BlendMode", 0f);
+                        transparentMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                        transparentMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                        transparentMaterial.SetInt("_ZWrite", 0);
+                        transparentMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                        transparentRendered.m_Material = transparentMaterial;
+                    }
+                    else
+                    {
+                        Mod.Log.Warn("Transparent surface initialization: source area material was unavailable; using transparent base color only");
+                    }
+
+                    if (!prefabSystem.AddPrefab(transparent))
+                    {
+                        Mod.Log.Warn("Transparent surface initialization failed: PrefabSystem.AddPrefab returned false");
+                        return;
+                    }
+
+                    m_TransparentSurfaceEntity = prefabSystem.GetEntity(transparent);
+                    // AddPrefab creates the prefab entity, while UpdatePrefab queues
+                    // the normal prefab-update path that initializes dependent
+                    // RenderedAreaData/AreaBatch state for the new surface.
+                    prefabSystem.UpdatePrefab(transparent);
+                    Mod.Log.InfoFormat(
+                        "Transparent surface registered: entity={0}, prefabId='{1}'",
+                        m_TransparentSurfaceEntity,
+                        transparent.GetPrefabID());
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Error(exception, "Transparent surface initialization failed");
+            }
         }
 
         private void StartAreaCatalogBuild(PrefabSystem prefabSystem)

@@ -89,8 +89,8 @@ const register = (moduleRegistry) => {
   const surfacePickerCollapsedGroups$ = bindValue("automatictexturereplacer", "surfacePickerCollapsedGroups", "{}");
   const surfacePickerX$ = bindValue("automatictexturereplacer", "surfacePickerX", -1);
   const surfacePickerY$ = bindValue("automatictexturereplacer", "surfacePickerY", -1);
-  const surfacePickerWidth$ = bindValue("automatictexturereplacer", "surfacePickerWidth", 920);
-  const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", 680);
+  const surfacePickerWidth$ = bindValue("automatictexturereplacer", "surfacePickerWidth", -1);
+  const surfacePickerHeight$ = bindValue("automatictexturereplacer", "surfacePickerHeight", -1);
   const surfacePickerContext$ = bindValue("automatictexturereplacer", "surfacePickerContext", "");
   const dialogFontSize$ = bindValue("automatictexturereplacer", "dialogFontSize", 100);
   const replacementScope$ = bindValue("automatictexturereplacer", "replacementScope", "assets");
@@ -177,11 +177,11 @@ const register = (moduleRegistry) => {
     surfaces("Edit replacement surfaces", "target"),
     actions);
   });
-  const dialogOpen$ = bindValue("automatictexturereplacer", "dialogOpen", true);
+  const dialogOpen$ = bindValue("automatictexturereplacer", "dialogOpen", false);
   const dialogX$ = bindValue("automatictexturereplacer", "dialogX", -1);
   const dialogY$ = bindValue("automatictexturereplacer", "dialogY", -1);
-  const dialogWidth$ = bindValue("automatictexturereplacer", "dialogWidth", 440);
-  const dialogHeight$ = bindValue("automatictexturereplacer", "dialogHeight", 300);
+  const dialogWidth$ = bindValue("automatictexturereplacer", "dialogWidth", -1);
+  const dialogHeight$ = bindValue("automatictexturereplacer", "dialogHeight", -1);
   const ToolbarButton = () => {
     const open = useValue(dialogOpen$);
     const toggle = () => trigger("automatictexturereplacer", "toggleDialog");
@@ -309,10 +309,12 @@ const register = (moduleRegistry) => {
       }
     }, [open, pickerContext, collapsedGroupsJson]);
 
-    const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - savedWidth) / 2)) : savedX;
-    const initialY = savedY < 0 ? Math.max(0, Math.round((window.innerHeight - savedHeight) / 2)) : savedY;
+    const initialWidth = savedWidth < 0 ? Math.round(window.innerWidth * 0.5) : savedWidth;
+    const initialHeight = savedHeight < 0 ? window.innerHeight : savedHeight;
+    const initialX = savedX < 0 ? 0 : savedX;
+    const initialY = savedY < 0 ? 0 : savedY;
     const position = dragPosition || { x: initialX, y: initialY };
-    const dimensions = size || { width: savedWidth, height: savedHeight };
+    const dimensions = size || { width: initialWidth, height: initialHeight };
 
     const beginDrag = (event) => {
       if (event.button !== 0 || event.target.closest("button")) return;
@@ -651,11 +653,14 @@ const register = (moduleRegistry) => {
     if (!open) return null;
 
     const minimumDialogWidth = Math.round(760 * fontSize / 100);
-    const initialWidth = Math.max(minimumDialogWidth, savedWidth);
-    const initialX = savedX < 0 ? Math.max(0, Math.round((window.innerWidth - initialWidth) / 2)) : savedX;
-    const initialY = savedY < 0 ? Math.max(0, Math.round((window.innerHeight - savedHeight) / 2)) : savedY;
+    const defaultWidth = Math.round(window.innerWidth * 0.5);
+    const defaultHeight = window.innerHeight;
+    const initialWidth = Math.max(minimumDialogWidth, savedWidth < 0 ? defaultWidth : savedWidth);
+    const initialHeight = savedHeight < 0 ? defaultHeight : savedHeight;
+    const initialX = savedX < 0 ? Math.round(window.innerWidth - initialWidth) : savedX;
+    const initialY = savedY < 0 ? 0 : savedY;
     const position = dragPosition || { x: initialX, y: initialY };
-    const dimensions = { width: Math.max(minimumDialogWidth, size?.width ?? savedWidth), height: size?.height ?? savedHeight };
+    const dimensions = { width: Math.max(minimumDialogWidth, size?.width ?? initialWidth), height: size?.height ?? initialHeight };
 
     const beginDrag = (event) => {
       if (event.button !== 0 || event.target.closest("button")) return;

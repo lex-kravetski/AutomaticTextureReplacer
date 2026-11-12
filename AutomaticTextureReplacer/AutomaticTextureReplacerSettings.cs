@@ -32,7 +32,7 @@ namespace AutomaticTextureReplacer
         public bool ShowRevertAllButton { get; set; }
 
         [SettingsUIHidden]
-        public bool DialogOpen { get; set; } = true;
+        public bool DialogOpen { get; set; }
 
         [SettingsUIHidden]
         public string ReplacementScope { get; set; } = "assets";
@@ -51,10 +51,10 @@ namespace AutomaticTextureReplacer
         public int DialogY { get; set; } = -1;
 
         [SettingsUIHidden]
-        public int DialogWidth { get; set; } = 440;
+        public int DialogWidth { get; set; } = -1;
 
         [SettingsUIHidden]
-        public int DialogHeight { get; set; } = 300;
+        public int DialogHeight { get; set; } = -1;
 
         [SettingsUIHidden]
         public int SurfacePickerX { get; set; } = -1;
@@ -63,10 +63,10 @@ namespace AutomaticTextureReplacer
         public int SurfacePickerY { get; set; } = -1;
 
         [SettingsUIHidden]
-        public int SurfacePickerWidth { get; set; } = 920;
+        public int SurfacePickerWidth { get; set; } = -1;
 
         [SettingsUIHidden]
-        public int SurfacePickerHeight { get; set; } = 680;
+        public int SurfacePickerHeight { get; set; } = -1;
 
         [SettingsUIHidden]
         public bool SurfacePickerOpen { get; set; }
@@ -85,15 +85,15 @@ namespace AutomaticTextureReplacer
 
         public override void SetDefaults()
         {
-            DialogOpen = true;
+            DialogOpen = false;
             DialogX = -1;
             DialogY = -1;
-            DialogWidth = 440;
-            DialogHeight = 300;
+            DialogWidth = -1;
+            DialogHeight = -1;
             SurfacePickerX = -1;
             SurfacePickerY = -1;
-            SurfacePickerWidth = 920;
-            SurfacePickerHeight = 680;
+            SurfacePickerWidth = -1;
+            SurfacePickerHeight = -1;
             SurfacePickerOpen = false;
             SurfacePickerContextJson = "";
             SurfacePickerCollapsedGroupsJson = "{}";

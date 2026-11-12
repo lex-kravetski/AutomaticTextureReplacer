@@ -7,6 +7,15 @@ namespace AutomaticTextureReplacer
 {
     internal static class ReplacementRuleCatalog
     {
+        public const string TransparentSurfacePrefabName = "Automatic Texture Replacer - Transparent Surface";
+        public const string TransparentSurfaceTemplateName = "Missing Area";
+        public const string TransparentSurfaceDisplayName = "Transparent Surface (Pseudo-delete)";
+
+        public static bool IsTransparentSurface(string name)
+        {
+            return string.Equals(name, TransparentSurfacePrefabName, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static Dictionary<string, HashSet<string>> BuildSurfaceTargetIds(
             IEnumerable<SurfaceReplacementSystem.SurfaceReplacementRule> rules,
             IReadOnlyDictionary<string, Entity> surfacesById,

@@ -1946,7 +1946,8 @@ namespace AutomaticTextureReplacer
                     }
 
                     string id = prefab.GetPrefabID().ToString();
-                    if (IsExcludedSurfaceName(prefab.name) || surfaceEntitiesById.ContainsKey(id))
+                    if ((IsExcludedSurfaceName(prefab.name) && !ReplacementRuleCatalog.IsTransparentSurface(prefab.name)) ||
+                        surfaceEntitiesById.ContainsKey(id))
                     {
                         continue;
                     }
@@ -2201,7 +2202,7 @@ namespace AutomaticTextureReplacer
                 {
                     if (!EntityManager.HasComponent<SurfaceData>(prefabEntity) ||
                         !m_PrefabSystem.TryGetPrefab<PrefabBase>(prefabEntity, out PrefabBase prefab) || prefab == null ||
-                        IsExcludedSurfaceName(prefab.name))
+                        (IsExcludedSurfaceName(prefab.name) && !ReplacementRuleCatalog.IsTransparentSurface(prefab.name)))
                     {
                         continue;
                     }

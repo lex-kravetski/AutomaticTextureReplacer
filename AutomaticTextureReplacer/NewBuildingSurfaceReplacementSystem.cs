@@ -391,7 +391,8 @@ namespace AutomaticTextureReplacer
                         continue;
                     }
 
-                    if (!EntityManager.HasComponent<SurfaceData>(prefabEntity) || IsExcludedSurfaceName(prefab.name))
+                    if (!EntityManager.HasComponent<SurfaceData>(prefabEntity) ||
+                        (IsExcludedSurfaceName(prefab.name) && !ReplacementRuleCatalog.IsTransparentSurface(prefab.name)))
                     {
                         continue;
                     }
