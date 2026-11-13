@@ -234,11 +234,22 @@ namespace AutomaticTextureReplacer
             Mod.Log.InfoFormat("Revert All request queued: areas={0}", areas);
         }
 
-        public static void QueueConstructionBatchRefresh(Entity sourcePrefab, Entity targetPrefab, Entity constructionOwner = default)
+        public static void QueueConstructionBatchRefresh(
+            Entity sourcePrefab,
+            Entity targetPrefab,
+            Entity constructionOwner = default,
+            OwnerDefinition constructionOwnerDefinition = default,
+            bool hasConstructionOwnerDefinition = false)
         {
             lock (s_RequestLock)
             {
-                if (s_ConstructionBatchRefreshRequests.Any(request => request.SourcePrefab == sourcePrefab && request.TargetPrefab == targetPrefab))
+                if (s_ConstructionBatchRefreshRequests.Any(request =>
+                        !request.MatchIndustryType &&
+                        request.SourcePrefab == sourcePrefab &&
+                        request.TargetPrefab == targetPrefab &&
+                        request.ConstructionOwner == constructionOwner &&
+                        request.HasConstructionOwnerDefinition == hasConstructionOwnerDefinition &&
+                        (!hasConstructionOwnerDefinition || request.ConstructionOwnerDefinition.Equals(constructionOwnerDefinition))))
                 {
                     return;
                 }
@@ -248,6 +259,8 @@ namespace AutomaticTextureReplacer
                     SourcePrefab = sourcePrefab,
                     TargetPrefab = targetPrefab,
                     ConstructionOwner = constructionOwner,
+                    ConstructionOwnerDefinition = constructionOwnerDefinition,
+                    HasConstructionOwnerDefinition = hasConstructionOwnerDefinition,
                     MatchIndustryType = false,
                 });
             }
@@ -492,7 +505,11 @@ namespace AutomaticTextureReplacer
             m_AreaBatchEntityQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadWrite<Batch>() },
-                None = new[] { ComponentType.ReadOnly<Temp>() },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
             });
         }
 
@@ -743,7 +760,7 @@ namespace AutomaticTextureReplacer
                     }
                 }
 
-                EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+                EntityCommandBuffer commandBuffer = default(EntityCommandBuffer);
                 bool hasSpecialFieldUpdates = false;
 
                 // Once the area exists, match it to the exact building that
@@ -757,15 +774,14 @@ namespace AutomaticTextureReplacer
                             continue;
                         Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
                         Entity owner = GetOwningBuildingEntity(area);
-                        if (owner == Entity.Null)
-                            continue;
                         foreach (PendingConstructionBatchRefresh request in m_PendingConstructionBatchRefreshes)
                         {
                             if (request.MatchIndustryType || request.SourcePrefab != source ||
-                                request.ConstructionOwner == Entity.Null || request.ConstructionOwner != owner ||
+                                !MatchesConstructionSurfaceRequest(request, owner) ||
                                 !m_QueuedConstructionSurfaceAreas.Add(area))
                                 continue;
 
+                            EnsureToolOutputCommandBuffer(ref commandBuffer);
                             ApplySurfacePrefabReplacement(
                                 area,
                                 source,
@@ -789,10 +805,15 @@ namespace AutomaticTextureReplacer
                     using NativeArray<Entity> tempAreas = m_TempConstructionSurfaceQuery.ToEntityArray(Allocator.Temp);
                     foreach (Entity area in tempAreas)
                     {
+                        if (!EntityManager.Exists(area) || EntityManager.HasComponent<Deleted>(area) ||
+                            !EntityManager.HasComponent<Temp>(area) || !EntityManager.HasComponent<PrefabRef>(area))
+                        {
+                            continue;
+                        }
+
                         Temp temp = EntityManager.GetComponentData<Temp>(area);
                         if ((temp.m_Flags & (TempFlags.Delete | TempFlags.Hidden)) != 0)
                             continue;
-                        Mod.Log.InfoFormat("Construction temporary surface candidate: area={0}, prefab='{1}', flags={2}", area, m_PrefabSystem.GetPrefabName(EntityManager.GetComponentData<PrefabRef>(area).m_Prefab), temp.m_Flags);
                         if ((temp.m_Flags & TempFlags.Create) == 0)
                             continue;
                         Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
@@ -851,6 +872,7 @@ namespace AutomaticTextureReplacer
                             continue;
                         }
 
+                        EnsureToolOutputCommandBuffer(ref commandBuffer);
                         if (m_IndustryAreasScheduledThisFrame.Add(industryRoot) &&
                             TryQueueIndustrySurfaceOverlay(
                                 industryRoot,
@@ -921,6 +943,7 @@ namespace AutomaticTextureReplacer
                                 continue;
                             }
 
+                            EnsureToolOutputCommandBuffer(ref commandBuffer);
                             if (m_IndustryAreasScheduledThisFrame.Add(industryArea) &&
                                 TryQueueIndustrySurfaceOverlay(
                                     industryArea,
@@ -980,6 +1003,7 @@ namespace AutomaticTextureReplacer
                             {
                                 continue;
                             }
+                            EnsureToolOutputCommandBuffer(ref commandBuffer);
                             ApplySurfacePrefabReplacement(
                                 fieldArea,
                                 originalFieldPrefab,
@@ -1486,9 +1510,25 @@ namespace AutomaticTextureReplacer
             Entity originalSpecialIndustryPrefab = default)
         {
             if (area == Entity.Null || sourcePrefab == Entity.Null || targetPrefab == Entity.Null ||
-                !EntityManager.Exists(area) || !EntityManager.HasComponent<PrefabRef>(area))
+                !IsReplacementAreaUsable(area))
             {
                 return false;
+            }
+
+            if (EntityManager.HasComponent<Temp>(area))
+            {
+                // Placement tools can destroy temporary surfaces before the
+                // ToolOutputBarrier plays its ECB. Update the existing data
+                // component immediately while the entity is known to be alive,
+                // so no deferred command can target a deleted preset object.
+                PrepareSurfaceReplacement(area, sourcePrefab, targetPrefab, sourceName, targetName);
+                EntityManager.SetComponentData(area, new PrefabRef { m_Prefab = targetPrefab });
+                Mod.Log.InfoFormat(
+                    "Temporary construction surface swapped immediately: area={0}, source='{1}', target='{2}'",
+                    area,
+                    sourceName,
+                    targetName);
+                return true;
             }
 
             if (originalSpecialIndustryPrefab != Entity.Null)
@@ -1524,8 +1564,7 @@ namespace AutomaticTextureReplacer
             Entity originalSpecialIndustryPrefab = default,
             string sourceNameOverride = null)
         {
-            if (area == Entity.Null || !EntityManager.Exists(area) ||
-                !EntityManager.HasComponent<PrefabRef>(area))
+            if (area == Entity.Null || !IsReplacementAreaUsable(area))
             {
                 return false;
             }
@@ -1542,6 +1581,64 @@ namespace AutomaticTextureReplacer
                 sourceName,
                 m_PrefabSystem.GetPrefabName(targetPrefab),
                 originalSpecialIndustryPrefab);
+        }
+
+        private bool IsReplacementAreaUsable(Entity area)
+        {
+            if (area == Entity.Null || !EntityManager.Exists(area) ||
+                EntityManager.HasComponent<Deleted>(area) || !EntityManager.HasComponent<PrefabRef>(area))
+            {
+                return false;
+            }
+
+            if (EntityManager.HasComponent<Temp>(area))
+            {
+                Temp temp = EntityManager.GetComponentData<Temp>(area);
+                if ((temp.m_Flags & (TempFlags.Delete | TempFlags.Hidden)) != 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool MatchesConstructionSurfaceRequest(PendingConstructionBatchRefresh request, Entity building)
+        {
+            if (request.ConstructionOwner != Entity.Null)
+            {
+                if (building != Entity.Null && request.ConstructionOwner == building)
+                {
+                    return true;
+                }
+            }
+
+            if (!request.HasConstructionOwnerDefinition || building == Entity.Null ||
+                !EntityManager.HasComponent<PrefabRef>(building) ||
+                !EntityManager.HasComponent<Game.Objects.Transform>(building))
+            {
+                return false;
+            }
+
+            if (EntityManager.GetComponentData<PrefabRef>(building).m_Prefab != request.ConstructionOwnerDefinition.m_Prefab)
+            {
+                return false;
+            }
+
+            Game.Objects.Transform transform = EntityManager.GetComponentData<Game.Objects.Transform>(building);
+            float3 positionDelta = transform.m_Position - request.ConstructionOwnerDefinition.m_Position;
+            float rotationAlignment = math.abs(math.dot(
+                transform.m_Rotation.value,
+                request.ConstructionOwnerDefinition.m_Rotation.value));
+            return math.lengthsq(positionDelta) <= 0.25f && rotationAlignment >= 0.999f;
+        }
+
+        private void EnsureToolOutputCommandBuffer(ref EntityCommandBuffer commandBuffer)
+        {
+            if (!commandBuffer.IsCreated)
+            {
+                commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            }
         }
 
         private void PrepareSurfaceReplacement(
@@ -2549,6 +2646,14 @@ namespace AutomaticTextureReplacer
 
         private void QueueBatchDiagnostic(Entity areaEntity, Entity sourcePrefab, Entity targetPrefab, string sourceName, string targetName)
         {
+            // Temporary areas are frequently replaced by placement tools and
+            // preset generators. Their batch membership is transient; resetting
+            // the global area batch cache for them can race their deletion.
+            if (!IsReplacementAreaUsable(areaEntity) || EntityManager.HasComponent<Temp>(areaEntity))
+            {
+                return;
+            }
+
             int expectedBatchIndex = EntityManager.HasComponent<RenderedAreaData>(targetPrefab)
                 ? EntityManager.GetComponentData<RenderedAreaData>(targetPrefab).m_BatchIndex
                 : -1;
@@ -2610,10 +2715,20 @@ namespace AutomaticTextureReplacer
             {
                 PendingBatchDiagnostic diagnostic = m_PendingBatchDiagnostics[i];
                 diagnostic.FramesChecked++;
-                if (!EntityManager.Exists(diagnostic.Area))
+                if (!EntityManager.Exists(diagnostic.Area) || EntityManager.HasComponent<Deleted>(diagnostic.Area))
                 {
                     Mod.Log.WarnFormat(
-                        "Area batch diagnostic stopped: area no longer exists; area={0}, target='{1}'",
+                        "Area batch diagnostic stopped: area no longer exists or is deleted; area={0}, target='{1}'",
+                        diagnostic.Area,
+                        diagnostic.TargetName);
+                    m_PendingBatchDiagnostics.RemoveAt(i);
+                    continue;
+                }
+
+                if (EntityManager.HasComponent<Temp>(diagnostic.Area))
+                {
+                    Mod.Log.InfoFormat(
+                        "Area batch diagnostic stopped for transient area: area={0}, target='{1}'",
                         diagnostic.Area,
                         diagnostic.TargetName);
                     m_PendingBatchDiagnostics.RemoveAt(i);
@@ -2727,7 +2842,9 @@ namespace AutomaticTextureReplacer
                 {
                     bool sourceContainsArea = LogBatchMembership(diagnostic);
                     bool targetContainsArea = TryBatchContainsArea(diagnostic.ExpectedBatchIndex, diagnostic.Area, out _);
-                    if (sourceContainsArea || !targetContainsArea)
+                    bool sourceAndTargetAreSameBatch = diagnostic.SourceBatchIndex >= 0 &&
+                        diagnostic.SourceBatchIndex == diagnostic.ExpectedBatchIndex;
+                    if ((!sourceAndTargetAreSameBatch && sourceContainsArea) || !targetContainsArea)
                     {
                         if (canRebuildAreaBatch && !diagnostic.RebuildAttempted)
                         {
@@ -2828,7 +2945,12 @@ namespace AutomaticTextureReplacer
             {
                 for (int i = 0; i < areas.Length; i++)
                 {
-                    EntityManager.SetComponentData(areas[i], default(Batch));
+                    Entity area = areas[i];
+                    if (EntityManager.Exists(area) && !EntityManager.HasComponent<Deleted>(area) &&
+                        !EntityManager.HasComponent<Temp>(area) && EntityManager.HasComponent<Batch>(area))
+                    {
+                        EntityManager.SetComponentData(area, default(Batch));
+                    }
                 }
             }
             finally

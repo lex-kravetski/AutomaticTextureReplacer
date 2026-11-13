@@ -335,10 +335,23 @@ namespace AutomaticTextureReplacer
 
                     // Keep the source prefab until the area has been created.
                     // SurfaceReplacementSystem handles the applied area itself.
-                    SurfaceReplacementSystem.QueueConstructionBatchRefresh(definition.m_Prefab, targets[m_Random.Next(targets.Count)], definition.m_Owner);
+                    bool hasSurfaceOwnerDefinition = EntityManager.HasComponent<OwnerDefinition>(definitionEntity);
+                    OwnerDefinition surfaceOwnerDefinition = hasSurfaceOwnerDefinition
+                        ? EntityManager.GetComponentData<OwnerDefinition>(definitionEntity)
+                        : default;
+                    SurfaceReplacementSystem.QueueConstructionBatchRefresh(
+                        definition.m_Prefab,
+                        targets[m_Random.Next(targets.Count)],
+                        definition.m_Owner,
+                        surfaceOwnerDefinition,
+                        hasSurfaceOwnerDefinition);
                     Mod.Log.InfoFormat(
-                        "Automatic construction replacement queued for post-creation swap: definition={0}, source='{1}', candidates={2}",
+                        "Automatic construction replacement queued for post-creation swap: definition={0}, owner={1}, ownerDefinition={2}, source='{3}', candidates={4}",
                         definitionEntity,
+                        definition.m_Owner,
+                        hasSurfaceOwnerDefinition
+                            ? surfaceOwnerDefinition.m_Prefab + " at " + surfaceOwnerDefinition.m_Position
+                            : "<none>",
                         m_PrefabSystem.GetPrefabName(definition.m_Prefab),
                         targets.Count);
                 }
