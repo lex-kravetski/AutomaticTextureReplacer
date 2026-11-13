@@ -67,7 +67,11 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<PrefabData>(),
                         ComponentType.ReadOnly<SurfaceData>(),
                     },
-                    None = new[] { ComponentType.ReadOnly<Deleted>() },
+                    None = new[]
+                    {
+                        ComponentType.ReadOnly<Deleted>(),
+                        ComponentType.ReadOnly<SurfaceReplacementSystem.TransparentIndustryPrefabCloneTag>(),
+                    },
                 },
                 new EntityQueryDesc
                 {
@@ -76,9 +80,21 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<PrefabData>(),
                         ComponentType.ReadOnly<ExtractorAreaData>(),
                     },
-                    None = new[] { ComponentType.ReadOnly<Deleted>() },
+                    None = new[]
+                    {
+                        ComponentType.ReadOnly<Deleted>(),
+                        ComponentType.ReadOnly<SurfaceReplacementSystem.TransparentIndustryPrefabCloneTag>(),
+                    },
                 });
-            m_AllPrefabQuery = GetEntityQuery(ComponentType.ReadOnly<PrefabData>());
+            m_AllPrefabQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<PrefabData>() },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Deleted>(),
+                    ComponentType.ReadOnly<SurfaceReplacementSystem.TransparentIndustryPrefabCloneTag>(),
+                },
+            });
             m_CreationDefinitionQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
