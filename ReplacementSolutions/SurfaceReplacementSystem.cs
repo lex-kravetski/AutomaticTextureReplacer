@@ -52,6 +52,7 @@ namespace AutomaticTextureReplacer
         private sealed class PendingConstructionBatchRefresh
         {
             public Entity SourcePrefab;
+            public Entity RuleSourcePrefab;
             public Entity TargetPrefab;
             public Entity ConstructionOwner;
             public OwnerDefinition ConstructionOwnerDefinition;
@@ -239,8 +240,14 @@ namespace AutomaticTextureReplacer
             Entity targetPrefab,
             Entity constructionOwner = default,
             OwnerDefinition constructionOwnerDefinition = default,
-            bool hasConstructionOwnerDefinition = false)
+            bool hasConstructionOwnerDefinition = false,
+            Entity ruleSourcePrefab = default)
         {
+            if (ruleSourcePrefab == Entity.Null)
+            {
+                ruleSourcePrefab = sourcePrefab;
+            }
+
             lock (s_RequestLock)
             {
                 if (s_ConstructionBatchRefreshRequests.Any(request =>
@@ -257,6 +264,7 @@ namespace AutomaticTextureReplacer
                 s_ConstructionBatchRefreshRequests.Add(new PendingConstructionBatchRefresh
                 {
                     SourcePrefab = sourcePrefab,
+                    RuleSourcePrefab = ruleSourcePrefab,
                     TargetPrefab = targetPrefab,
                     ConstructionOwner = constructionOwner,
                     ConstructionOwnerDefinition = constructionOwnerDefinition,
@@ -700,6 +708,7 @@ namespace AutomaticTextureReplacer
                     if (!m_PendingConstructionBatchRefreshes.Any(pending =>
                             pending.MatchIndustryType == request.MatchIndustryType &&
                             pending.SourcePrefab == request.SourcePrefab &&
+                            pending.RuleSourcePrefab == request.RuleSourcePrefab &&
                             pending.ConstructionOwner == request.ConstructionOwner &&
                             pending.HasConstructionOwnerDefinition == request.HasConstructionOwnerDefinition &&
                             (!request.HasConstructionOwnerDefinition || pending.ConstructionOwnerDefinition.Equals(request.ConstructionOwnerDefinition)) &&
@@ -721,7 +730,12 @@ namespace AutomaticTextureReplacer
             {
                 HashSet<string> enabledMappings = GetEnabledConstructionMappings();
                 m_PendingConstructionBatchRefreshes.RemoveAll(request =>
-                    !enabledMappings.Contains((request.MatchIndustryType ? "I|" : "S|") + GetPrefabIdString(request.SourcePrefab) + "|" + GetPrefabIdString(request.TargetPrefab)));
+                {
+                    Entity mappingSource = !request.MatchIndustryType && request.RuleSourcePrefab != Entity.Null
+                        ? request.RuleSourcePrefab
+                        : request.SourcePrefab;
+                    return !enabledMappings.Contains((request.MatchIndustryType ? "I|" : "S|") + GetPrefabIdString(mappingSource) + "|" + GetPrefabIdString(request.TargetPrefab));
+                });
             }
 
             using (NativeArray<Entity> changedAreas = m_ChangedSurfaceAreaQuery.ToEntityArray(Allocator.Temp))
@@ -2136,6 +2150,8 @@ namespace AutomaticTextureReplacer
 
             Dictionary<string, Entity> surfaceEntitiesById = new Dictionary<string, Entity>(StringComparer.Ordinal);
             Dictionary<Entity, string> surfaceIdsByEntity = new Dictionary<Entity, string>();
+            Dictionary<string, string> surfaceIdsByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<Entity, string> parenthesizedSurfaceNames = new Dictionary<Entity, string>();
             using (NativeArray<Entity> prefabEntities = m_SurfacePrefabQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity prefabEntity in prefabEntities)
@@ -2160,6 +2176,42 @@ namespace AutomaticTextureReplacer
 
                     surfaceEntitiesById.Add(id, prefabEntity);
                     surfaceIdsByEntity[prefabEntity] = id;
+                    if (TryGetParenthesizedContent(prefab.name, out string parenthesizedContent))
+                    {
+                        parenthesizedSurfaceNames[prefabEntity] = parenthesizedContent;
+                    }
+                    else if (!surfaceIdsByName.ContainsKey(prefab.name))
+                    {
+                        surfaceIdsByName.Add(prefab.name, id);
+                    }
+                }
+            }
+
+            // Some tools wrap the selected surface name in parentheses, for
+            // example "Placemaker Overlay (Tiles Surface 03)". Resolve any
+            // configured surface name contained in that text to its rule ID.
+            foreach (KeyValuePair<Entity, string> surface in parenthesizedSurfaceNames)
+            {
+                string originalSurfaceName = null;
+                string originalSurfaceId = null;
+                foreach (KeyValuePair<string, string> knownSurface in surfaceIdsByName)
+                {
+                    if (knownSurface.Key.Length <= (originalSurfaceName?.Length ?? 0) ||
+                        surface.Value.IndexOf(knownSurface.Key, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+
+                    originalSurfaceName = knownSurface.Key;
+                    originalSurfaceId = knownSurface.Value;
+                }
+
+                if (originalSurfaceId != null)
+                {
+                    surfaceIdsByEntity[surface.Key] = originalSurfaceId;
+                    Mod.Log.InfoFormat("Resolved parenthesized surface wrapper: wrapper='{0}', source='{1}'",
+                        m_PrefabSystem.GetPrefabName(surface.Key),
+                        GetSurfaceDisplayName(originalSurfaceId, surfaceEntitiesById));
                 }
             }
 
@@ -3059,6 +3111,25 @@ namespace AutomaticTextureReplacer
             return !string.IsNullOrEmpty(id) && surfaceEntitiesById.TryGetValue(id, out Entity entity)
                 ? m_PrefabSystem.GetPrefabName(entity) + " [" + id + "]"
                 : id ?? "<null>";
+        }
+
+        private static bool TryGetParenthesizedContent(string value, out string content)
+        {
+            content = null;
+            if (string.IsNullOrEmpty(value))
+            {
+                return false;
+            }
+
+            int openParenthesis = value.IndexOf('(');
+            int closeParenthesis = value.LastIndexOf(')');
+            if (openParenthesis < 0 || closeParenthesis <= openParenthesis + 1)
+            {
+                return false;
+            }
+
+            content = value.Substring(openParenthesis + 1, closeParenthesis - openParenthesis - 1);
+            return true;
         }
 
         private Entity GetOwningBuildingEntity(Entity areaEntity)

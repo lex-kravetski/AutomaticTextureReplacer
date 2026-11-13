@@ -28,6 +28,7 @@ namespace AutomaticTextureReplacer
         private string m_CachedAreaRulesJson;
         private int m_CachedSurfacePrefabCount = -1;
         private Dictionary<Entity, List<Entity>> m_TargetsBySource = new Dictionary<Entity, List<Entity>>();
+        private Dictionary<Entity, Entity> m_RuleSourceByWrappedSurface = new Dictionary<Entity, Entity>();
         private Dictionary<Entity, List<Entity>> m_TargetsByIndustryType = new Dictionary<Entity, List<Entity>>();
         private Entity m_LastSpecialIndustryPrefab;
         private OwnerDefinition m_LastSpecialIndustryOwnerDefinition;
@@ -344,7 +345,10 @@ namespace AutomaticTextureReplacer
                         targets[m_Random.Next(targets.Count)],
                         definition.m_Owner,
                         surfaceOwnerDefinition,
-                        hasSurfaceOwnerDefinition);
+                        hasSurfaceOwnerDefinition,
+                        m_RuleSourceByWrappedSurface.TryGetValue(definition.m_Prefab, out Entity ruleSourcePrefab)
+                            ? ruleSourcePrefab
+                            : definition.m_Prefab);
                     Mod.Log.InfoFormat(
                         "Automatic construction replacement queued for post-creation swap: definition={0}, owner={1}, ownerDefinition={2}, source='{3}', candidates={4}",
                         definitionEntity,
@@ -380,6 +384,7 @@ namespace AutomaticTextureReplacer
             m_CachedAreaRulesJson = areaRulesJson;
             m_CachedSurfacePrefabCount = m_SurfacePrefabQuery.CalculateEntityCount();
             m_TargetsBySource.Clear();
+            m_RuleSourceByWrappedSurface.Clear();
             m_TargetsByIndustryType.Clear();
 
             List<SurfaceReplacementSystem.SurfaceReplacementRule> rules;
@@ -395,6 +400,8 @@ namespace AutomaticTextureReplacer
             }
 
             Dictionary<string, Entity> surfacesById = new Dictionary<string, Entity>(StringComparer.Ordinal);
+            Dictionary<string, Entity> surfacesByName = new Dictionary<string, Entity>(StringComparer.OrdinalIgnoreCase);
+            List<(Entity Entity, string Content)> wrappedSurfaces = new List<(Entity, string)>();
             using (NativeArray<Entity> prefabs = m_SurfacePrefabQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity prefabEntity in prefabs)
@@ -414,6 +421,15 @@ namespace AutomaticTextureReplacer
                     if (!surfacesById.ContainsKey(id))
                     {
                         surfacesById.Add(id, prefabEntity);
+                    }
+
+                    if (TryGetParenthesizedContent(prefab.name, out string parenthesizedContent))
+                    {
+                        wrappedSurfaces.Add((prefabEntity, parenthesizedContent));
+                    }
+                    else if (!surfacesByName.ContainsKey(prefab.name))
+                    {
+                        surfacesByName.Add(prefab.name, prefabEntity);
                     }
                 }
             }
@@ -437,6 +453,34 @@ namespace AutomaticTextureReplacer
                 if (targets.Count > 0)
                 {
                     m_TargetsBySource[source] = targets;
+                }
+            }
+
+            // Providers may put the underlying surface name in parentheses,
+            // e.g. "Placemaker Overlay (Tiles Surface 03)". Keep the wrapper as
+            // the applied prefab, but use the underlying surface for rule lookup.
+            foreach ((Entity wrapper, string content) in wrappedSurfaces)
+            {
+                Entity matchedSource = Entity.Null;
+                string matchedName = null;
+                foreach (KeyValuePair<string, Entity> knownSurface in surfacesByName)
+                {
+                    if (knownSurface.Key.Length <= (matchedName?.Length ?? 0) ||
+                        content.IndexOf(knownSurface.Key, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+
+                    matchedName = knownSurface.Key;
+                    matchedSource = knownSurface.Value;
+                }
+
+                if (matchedSource != Entity.Null && m_TargetsBySource.TryGetValue(matchedSource, out List<Entity> wrapperTargets))
+                {
+                    m_TargetsBySource[wrapper] = wrapperTargets;
+                    m_RuleSourceByWrappedSurface[wrapper] = matchedSource;
+                    Mod.Log.InfoFormat("Automatic construction wrapper matched: wrapper='{0}', ruleSource='{1}'",
+                        m_PrefabSystem.GetPrefabName(wrapper), m_PrefabSystem.GetPrefabName(matchedSource));
                 }
             }
 
@@ -493,6 +537,25 @@ namespace AutomaticTextureReplacer
                 m_TargetsBySource.Sum(pair => pair.Value.Count),
                 m_TargetsByIndustryType.Count,
                 m_TargetsByIndustryType.Sum(pair => pair.Value.Count));
+        }
+
+        private static bool TryGetParenthesizedContent(string value, out string content)
+        {
+            content = null;
+            if (string.IsNullOrEmpty(value))
+            {
+                return false;
+            }
+
+            int openParenthesis = value.IndexOf('(');
+            int closeParenthesis = value.LastIndexOf(')');
+            if (openParenthesis < 0 || closeParenthesis <= openParenthesis + 1)
+            {
+                return false;
+            }
+
+            content = value.Substring(openParenthesis + 1, closeParenthesis - openParenthesis - 1);
+            return true;
         }
 
         private static bool IsExcludedSurfaceName(string name)
