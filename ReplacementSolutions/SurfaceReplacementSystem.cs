@@ -138,7 +138,7 @@ namespace AutomaticTextureReplacer
         private readonly HashSet<string> m_LoggedDecalMaskIssues = new HashSet<string>();
         private readonly HashSet<Entity> m_IndustryAreasScheduledThisFrame = new HashSet<Entity>();
         private readonly HashSet<Entity> m_IndustryAreasRevertedThisFrame = new HashSet<Entity>();
-        private readonly HashSet<Entity> m_IndustryPrefabsWithoutInitialSubArea = new HashSet<Entity>();
+        private readonly HashSet<Entity> m_LoggedDeferredIndustryRoots = new HashSet<Entity>();
         private readonly Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot> m_SpecialIndustryPrefabSnapshots = new Dictionary<PrefabBase, SpecialIndustryPrefabSnapshot>();
         private readonly Dictionary<Entity, PrefabBase> m_TransparentIndustryPrefabClones = new Dictionary<Entity, PrefabBase>();
         private int m_ConstructionRefreshGeneration = -1;
@@ -154,6 +154,7 @@ namespace AutomaticTextureReplacer
         private EntityQuery m_ChangedSpecialIndustryRootAreaQuery;
         private EntityQuery m_ChangedIndustrySurfaceOverlayQuery;
         private EntityQuery m_DeferredIndustryRootCloneQuery;
+        private EntityQuery m_PendingCreationDefinitionQuery;
         private EntityQuery m_CreatedSpecialIndustryFieldQuery;
         private EntityQuery m_AreaBatchEntityQuery;
         private PrefabSystem m_PrefabSystem;
@@ -472,6 +473,7 @@ namespace AutomaticTextureReplacer
                     ComponentType.ReadOnly<SpecialIndustryLotReplacement>(),
                 },
             });
+            m_PendingCreationDefinitionQuery = GetEntityQuery(ComponentType.ReadOnly<CreationDefinition>());
             m_CreatedSpecialIndustryFieldQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -545,10 +547,11 @@ namespace AutomaticTextureReplacer
 
         private void ProcessDeferredIndustryRootClones()
         {
-            // Forestry lots initially have no SubArea. Their overlay must finish
-            // creation before changing the root PrefabRef; doing both in one
-            // command-buffer playback can crash the area's creation systems.
+            // The replacement overlay must finish creation before changing the
+            // root PrefabRef. Doing both in one command-buffer playback can
+            // corrupt extractor setup, including roots that already had SubArea.
             EntityCommandBuffer commandBuffer = default(EntityCommandBuffer);
+            using (NativeArray<Entity> pendingDefinitions = m_PendingCreationDefinitionQuery.ToEntityArray(Allocator.Temp))
             using (NativeArray<Entity> roots = m_DeferredIndustryRootCloneQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity root in roots)
@@ -558,6 +561,29 @@ namespace AutomaticTextureReplacer
                     {
                         continue;
                     }
+
+                    Entity pendingDefinition = Entity.Null;
+                    foreach (Entity definitionEntity in pendingDefinitions)
+                    {
+                        CreationDefinition pending = EntityManager.GetComponentData<CreationDefinition>(definitionEntity);
+                        if (pending.m_Original == root || pending.m_Owner == root)
+                        {
+                            pendingDefinition = definitionEntity;
+                            break;
+                        }
+                    }
+                    if (pendingDefinition != Entity.Null)
+                    {
+                        if (m_LoggedDeferredIndustryRoots.Add(root))
+                        {
+                            Mod.Log.InfoFormat(
+                                "Transparent industry root clone deferred until creation completes: root={0}, pendingDefinition={1}",
+                                root,
+                                pendingDefinition);
+                        }
+                        continue;
+                    }
+                    m_LoggedDeferredIndustryRoots.Remove(root);
 
                     SpecialIndustrySurfaceOverlayState state =
                         EntityManager.GetComponentData<SpecialIndustrySurfaceOverlayState>(root);
@@ -3251,47 +3277,9 @@ namespace AutomaticTextureReplacer
             }
 
             bool hasSubAreaBuffer = EntityManager.HasBuffer<Game.Areas.SubArea>(industryRoot);
-            if (!hasSubAreaBuffer)
-            {
-                m_IndustryPrefabsWithoutInitialSubArea.Add(industryPrefab);
-            }
-            // A root that first needed SubArea added uses the original overlay
-            // path on later replacements as well. A restored save can already
-            // contain the buffer and overlay state, so recognize that case too.
-            bool useOriginalRootPath = m_IndustryPrefabsWithoutInitialSubArea.Contains(industryPrefab) ||
-                (EntityManager.HasComponent<SpecialIndustrySurfaceOverlayState>(industryRoot) &&
-                 !EntityManager.HasComponent<SpecialIndustryLotReplacement>(industryRoot));
-            // Forestry-like lots are still being assembled when their first
-            // extraction surface is queued: SubArea does not exist yet. Changing
-            // their root PrefabRef in the same command-buffer playback as
-            // AddBuffer<SubArea> and the owned overlay can crash Unity ECS.
-            // Keep the original root until its child-area structure exists.
-            if (!useOriginalRootPath)
-            {
-                if (!TryUseTransparentIndustryPrefabClone(
-                        industryRoot,
-                        industryPrefab,
-                        commandBuffer,
-                        operationId,
-                        out Entity assignedPrefab))
-                {
-                    Mod.Log.WarnFormat(
-                        "Special-industry surface overlay skipped: operation={0}, root={1}, reason=transparent root clone unavailable",
-                        operationId,
-                        industryRoot);
-                    return false;
-                }
-
-                if (assignedPrefab != industryPrefab)
-                {
-                    QueueBatchDiagnostic(
-                        industryRoot,
-                        industryPrefab,
-                        assignedPrefab,
-                        m_PrefabSystem.GetPrefabName(industryPrefab),
-                        m_PrefabSystem.GetPrefabName(assignedPrefab));
-                }
-            }
+            // Apply the transparent root-prefab clone only after the replacement
+            // overlay has completed creation. Changing PrefabRef in the same ECB
+            // playback that creates the owned area can corrupt extractor setup.
             // Some extractor root areas (notably Forestry Lot) have no child
             // sub-areas until we add a replacement overlay. Give the owner the
             // buffer needed by SubAreaReferencesSystem before creating the owned

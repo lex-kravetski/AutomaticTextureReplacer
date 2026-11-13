@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using Colossal.Json;
+using Colossal.IO.AssetDatabase;
 using Colossal.UI.Binding;
 using Game.Areas;
 using Game.Common;
@@ -61,6 +64,53 @@ namespace AutomaticTextureReplacer
         private int m_SurfaceCatalogSurfaceCount;
         private int m_SurfaceCatalogModSurfaceCount;
         private int m_AreaCatalogIndustryCount;
+        private bool m_CustomTextureScanStarted;
+        private Task<List<CustomTextureFile>> m_CustomTextureScanTask;
+        private List<CustomTextureFile> m_CustomTextureFiles;
+        private int m_CustomTextureFileIndex;
+        private readonly Dictionary<string, CustomSurfaceInfo> m_CustomSurfacesById = new Dictionary<string, CustomSurfaceInfo>(StringComparer.Ordinal);
+        private readonly Dictionary<int, SurfacePreview> m_SurfacePreviewCache = new Dictionary<int, SurfacePreview>();
+        private readonly Dictionary<string, SurfacePreview> m_SurfaceAssetPreviewCache = new Dictionary<string, SurfacePreview>(StringComparer.Ordinal);
+        private int m_CustomTextureRegisteredCount;
+        private ILocalAssetDatabase m_CustomTextureAssetDatabase;
+        private Task m_CustomTextureAssetDatabaseRegistrationTask;
+        private bool m_CustomTextureAssetDatabaseReady;
+        private bool m_CustomTextureAssetDatabaseFailed;
+
+        private sealed class CustomTextureFile
+        {
+            public string FullPath;
+            public string RelativePath;
+            public string RootFolder;
+            public string DisplayName;
+        }
+
+        private sealed class CustomSurfaceInfo
+        {
+            public string RelativePath;
+            public string DisplayName;
+            public string Group;
+            public string Thumbnail;
+            public string TooltipThumbnail;
+        }
+
+        private sealed class SurfacePreview
+        {
+            public string Thumbnail;
+            public string TooltipThumbnail;
+        }
+
+        private sealed class SurfacePreviewRequest
+        {
+            public SurfacePrefab Prefab;
+            public Entity SurfaceEntity;
+            public Dictionary<string, string> CatalogEntry;
+        }
+
+        private List<Dictionary<string, string>> m_SurfaceCatalogEntries;
+        private readonly List<SurfacePreviewRequest> m_SurfacePreviewQueue = new List<SurfacePreviewRequest>();
+        private int m_SurfacePreviewQueueIndex;
+        private bool m_SurfaceCatalogPublished;
 
         protected override void OnCreate()
         {
@@ -167,20 +217,67 @@ namespace AutomaticTextureReplacer
                 gameManager.shouldUpdateWorld &&
                 (string.Equals(gameManager.gameMode.ToString(), "Game", StringComparison.Ordinal) ||
                  string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
-            if (!m_SurfaceCatalogBuildStarted && mapReady && !m_SurfaceQuery.IsEmptyIgnoreFilter)
+            PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
+            bool prefabsReady = prefabSystem != null && !m_SurfaceQuery.IsEmptyIgnoreFilter;
+            if (!m_CustomTextureScanStarted)
             {
-                StartSurfaceCatalogBuild();
+                StartCustomTextureScan();
+            }
+
+            if (m_CustomTextureScanTask != null && m_CustomTextureScanTask.IsCompleted)
+            {
+                if (m_CustomTextureScanTask.Status == TaskStatus.RanToCompletion)
+                {
+                    m_CustomTextureFiles = m_CustomTextureScanTask.Result;
+                    Mod.Log.InfoFormat("Custom surface texture scan found {0} supported images", m_CustomTextureFiles.Count);
+                }
+                else
+                {
+                    Mod.Log.Error(m_CustomTextureScanTask.Exception, "Custom surface texture scan failed");
+                    m_CustomTextureFiles = new List<CustomTextureFile>();
+                }
+                m_CustomTextureScanTask = null;
+            }
+
+            if (m_CustomTextureAssetDatabaseRegistrationTask != null && m_CustomTextureAssetDatabaseRegistrationTask.IsCompleted)
+            {
+                if (m_CustomTextureAssetDatabaseRegistrationTask.Status == TaskStatus.RanToCompletion)
+                {
+                    m_CustomTextureAssetDatabaseReady = true;
+                }
+                else
+                {
+                    m_CustomTextureAssetDatabaseFailed = true;
+                    Mod.Log.Error(m_CustomTextureAssetDatabaseRegistrationTask.Exception, "Custom texture asset database registration failed");
+                }
+                m_CustomTextureAssetDatabaseRegistrationTask = null;
+            }
+
+            if (!m_SurfaceCatalogBuildStarted && prefabsReady && m_CustomTextureFiles != null)
+            {
+                if (m_CustomTextureAssetDatabaseReady)
+                {
+                    RegisterCustomTextures(prefabSystem, maxPerFrame: 16);
+                }
+
+                if ((m_CustomTextureAssetDatabaseReady || m_CustomTextureAssetDatabaseFailed) &&
+                    mapReady && m_CustomTextureFileIndex >= m_CustomTextureFiles.Count)
+                {
+                    Mod.Log.InfoFormat("Custom surface registration complete: surfaces={0}", m_CustomTextureRegisteredCount);
+                    StartSurfaceCatalogBuild();
+                }
             }
 
             if (m_SurfaceCatalogBuildTask != null && m_SurfaceCatalogBuildTask.IsCompleted)
             {
                 if (m_SurfaceCatalogBuildTask.Status == TaskStatus.RanToCompletion)
                 {
-                    m_SurfaceCatalog.Update(m_SurfaceCatalogBuildTask.Result);
-                    Mod.Log.InfoFormat(
-                        "Surface catalog cached after map load: surfaces={0}, modSurfaces={1}",
-                        m_SurfaceCatalogSurfaceCount,
-                        m_SurfaceCatalogModSurfaceCount);
+                    if (m_SurfaceCatalogEntries != null)
+                    {
+                        m_SurfaceCatalogEntries.Sort((first, second) =>
+                            string.Compare(first["name"], second["name"], StringComparison.CurrentCultureIgnoreCase));
+                    }
+                    Mod.Log.InfoFormat("Preparing texture previews before publishing surface catalog: surfaces={0}", m_SurfaceCatalogSurfaceCount);
                 }
                 else if (m_SurfaceCatalogBuildTask.IsFaulted)
                 {
@@ -204,6 +301,8 @@ namespace AutomaticTextureReplacer
 
                 m_AreaCatalogBuildTask = null;
             }
+
+            UpdateSurfaceCatalogPreviews(maxPerFrame: 8);
 
             int fontSize = Mod.Settings?.DialogFontSize ?? 100;
             if (fontSize != m_LastDialogFontSize)
@@ -401,6 +500,452 @@ namespace AutomaticTextureReplacer
             m_SurfacePickerOpen.Update(false);
         }
 
+        private void StartCustomTextureScan()
+        {
+            m_CustomTextureScanStarted = true;
+            m_CustomTextureAssetDatabase = AssetDatabase.GetTransient();
+            m_CustomTextureAssetDatabaseRegistrationTask = AssetDatabase.global.RegisterDatabase(m_CustomTextureAssetDatabase);
+            string modsDataRoot = GetModsDataRoot();
+            string ownTextureDirectory = Path.Combine(modsDataRoot, "Replacement Solutions");
+            try
+            {
+                Directory.CreateDirectory(ownTextureDirectory);
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Error(exception, "Could not create the Replacement Solutions texture folder");
+            }
+
+            m_CustomTextureScanTask = Task.Run(() =>
+            {
+                var result = new List<CustomTextureFile>();
+                if (!Directory.Exists(modsDataRoot))
+                {
+                    return result;
+                }
+
+                foreach (string rootDirectory in Directory.GetDirectories(modsDataRoot))
+                {
+                    string rootName = Path.GetFileName(rootDirectory);
+                    if (ShouldSkipCustomTextureDirectory(rootName))
+                    {
+                        continue;
+                    }
+
+                    string prefix = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    IEnumerable<string> files;
+                    try
+                    {
+                        files = Directory.EnumerateFiles(rootDirectory, "*", SearchOption.AllDirectories).ToArray();
+                    }
+                    catch (Exception exception)
+                    {
+                        Mod.Log.Warn(exception, "Could not enumerate custom texture files under " + rootDirectory);
+                        continue;
+                    }
+
+                    foreach (string filePath in files)
+                    {
+                        if (!IsSupportedCustomTextureFile(filePath))
+                        {
+                            continue;
+                        }
+
+                        FileInfo fileInfo = new FileInfo(filePath);
+                        if (!fileInfo.Exists || fileInfo.Length <= 0 || fileInfo.Length > 8 * 1024 * 1024)
+                        {
+                            continue;
+                        }
+
+                        string relativePath = filePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                            ? filePath.Substring(prefix.Length)
+                            : Path.GetFileName(filePath);
+                        if (relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(ShouldSkipCustomTextureDirectory))
+                        {
+                            continue;
+                        }
+                        result.Add(new CustomTextureFile
+                        {
+                            FullPath = filePath,
+                            RelativePath = relativePath,
+                            RootFolder = rootName,
+                            DisplayName = Path.GetFileNameWithoutExtension(filePath),
+                        });
+                    }
+                }
+
+                return result
+                    .OrderBy(item => item.RootFolder, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(item => item.RelativePath, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+            });
+        }
+
+        private static string GetModsDataRoot()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "AppData", "LocalLow", "Colossal Order", "Cities Skylines II", "ModsData");
+        }
+
+        private static bool IsSupportedCustomTextureExtension(string extension)
+        {
+            return string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSupportedCustomTextureFile(string path)
+        {
+            if (!IsSupportedCustomTextureExtension(Path.GetExtension(path)))
+            {
+                return false;
+            }
+
+            string name = Path.GetFileNameWithoutExtension(path);
+            string[] nonColorMapSuffixes =
+            {
+                "_normal", "_normalmap", "_mask", "_maskmap", "_metallic", "_roughness",
+                "_ao", "_ambientocclusion", "_height", "_displacement", "_emission",
+                "_emissive", "_opacity", "_specular", "_orm",
+            };
+            return !nonColorMapSuffixes.Any(suffix => name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool ShouldSkipCustomTextureDirectory(string directoryName)
+        {
+            return string.IsNullOrWhiteSpace(directoryName) ||
+                   directoryName.StartsWith(".", StringComparison.Ordinal) ||
+                   directoryName.IndexOf("thumbnails", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   directoryName.Equals("Cache", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Caches", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Thumbnails", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Thumbnail", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Thumbs", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("CustomThumbnails", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Icons", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Icon", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Previews", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Preview", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Temp", StringComparison.OrdinalIgnoreCase) ||
+                   directoryName.Equals("Tmp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RegisterCustomTextures(PrefabSystem prefabSystem, int maxPerFrame)
+        {
+            if (prefabSystem == null || m_CustomTextureFiles == null)
+            {
+                return;
+            }
+
+            int processed = 0;
+            while (m_CustomTextureFileIndex < m_CustomTextureFiles.Count && processed < maxPerFrame)
+            {
+                CustomTextureFile file = m_CustomTextureFiles[m_CustomTextureFileIndex++];
+                processed++;
+                try
+                {
+                    byte[] bytes = File.ReadAllBytes(file.FullPath);
+                    var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false, false)
+                    {
+                        name = "Replacement Solutions - " + file.DisplayName,
+                        wrapMode = TextureWrapMode.Repeat,
+                        filterMode = FilterMode.Bilinear,
+                        anisoLevel = 4,
+                    };
+                    if (!ImageConversion.LoadImage(texture, bytes, false) || texture.width < 128 || texture.height < 128 || texture.width > 8192 || texture.height > 8192)
+                    {
+                        UnityEngine.Object.Destroy(texture);
+                        Mod.Log.WarnFormat("Custom surface texture skipped (unsupported or invalid image): '{0}'", file.FullPath);
+                        continue;
+                    }
+
+                    string relativeKey = file.RootFolder + "/" + file.RelativePath.Replace('\\', '/');
+                    string stableHash = GetStableCustomSurfaceHash(relativeKey);
+                    Colossal.Hash128 textureGuid = default;
+                    textureGuid.Calculate("Replacement Solutions/" + relativeKey.ToLowerInvariant());
+                    TextureAsset textureAsset = m_CustomTextureAssetDatabase.AddAsset<TextureAsset, Texture>(
+                        AssetDataPath.Create("Custom Surfaces", stableHash),
+                        texture,
+                        textureGuid);
+                    if (textureAsset == null || !TryCreateCustomSurface(prefabSystem, file, stableHash, textureAsset, out Entity surfaceEntity))
+                    {
+                        UnityEngine.Object.Destroy(texture);
+                        continue;
+                    }
+
+                    if (!prefabSystem.TryGetPrefab<SurfacePrefab>(surfaceEntity, out SurfacePrefab registeredPrefab) || registeredPrefab == null)
+                    {
+                        UnityEngine.Object.Destroy(texture);
+                        continue;
+                    }
+                    SurfacePreview preview = CreateSurfacePreview(texture);
+                    string relativePath = file.RootFolder + "/" + file.RelativePath.Replace('\\', '/');
+                    m_CustomSurfacesById[registeredPrefab.GetPrefabID().ToString()] = new CustomSurfaceInfo
+                    {
+                        RelativePath = relativePath,
+                        DisplayName = file.DisplayName,
+                        Group = file.RootFolder,
+                        Thumbnail = preview.Thumbnail,
+                        TooltipThumbnail = preview.TooltipThumbnail,
+                    };
+                    m_CustomTextureRegisteredCount++;
+                }
+                catch (Exception exception)
+                {
+                    Mod.Log.Error(exception, "Custom surface texture registration failed for " + file.FullPath);
+                }
+            }
+        }
+
+        private bool TryCreateCustomSurface(
+            PrefabSystem prefabSystem,
+            CustomTextureFile file,
+            string stableHash,
+            TextureAsset textureAsset,
+            out Entity surfaceEntity)
+        {
+            surfaceEntity = Entity.Null;
+            SurfacePrefab template = null;
+            using (NativeArray<Entity> surfaces = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in surfaces)
+                {
+                    if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab candidate) || candidate == null ||
+                        !candidate.TryGet<RenderedArea>(out RenderedArea rendered) || rendered == null)
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(candidate.name, ReplacementRuleCatalog.TransparentSurfaceTemplateName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        template = candidate;
+                        break;
+                    }
+
+                    if (template == null)
+                    {
+                        template = candidate;
+                    }
+                }
+            }
+
+            if (template == null)
+            {
+                Mod.Log.WarnFormat("Custom surface skipped because no RenderedArea template was available: '{0}'", file.FullPath);
+                return false;
+            }
+
+            string safeName = SanitizePrefabName(file.DisplayName);
+            string prefabName = "Replacement Solutions Custom " + stableHash + " " + safeName;
+            SurfacePrefab custom = (SurfacePrefab)template.Clone(prefabName);
+            custom.Remove<UIObject>();
+            if (!custom.TryGet<RenderedArea>(out RenderedArea renderedArea) || renderedArea == null)
+            {
+                return false;
+            }
+
+            renderedArea.m_Version = RenderedArea.Version.OverrideMaterial;
+            renderedArea.m_Material = null;
+            renderedArea.m_BaseColor = Color.white;
+            renderedArea.m_BaseColorMap = textureAsset;
+            renderedArea.m_NormalMap = null;
+            renderedArea.m_MaskMap = null;
+            renderedArea.m_Metallic = 0f;
+            renderedArea.m_Smoothness = 0f;
+
+            if (!prefabSystem.AddPrefab(custom))
+            {
+                Mod.Log.WarnFormat("Custom surface registration failed: PrefabSystem.AddPrefab returned false for '{0}'", file.FullPath);
+                return false;
+            }
+
+            surfaceEntity = prefabSystem.GetEntity(custom);
+            prefabSystem.UpdatePrefab(custom);
+            return surfaceEntity != Entity.Null;
+        }
+
+        private static string SanitizePrefabName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "Texture";
+            var builder = new StringBuilder(value.Length);
+            foreach (char character in value)
+            {
+                builder.Append(char.IsLetterOrDigit(character) || character == '-' || character == '_' ? character : '_');
+            }
+            return builder.ToString();
+        }
+
+        private static string GetStableCustomSurfaceHash(string relativeKey)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(relativeKey.ToLowerInvariant())))
+                    .Replace("-", string.Empty).Substring(0, 16);
+            }
+        }
+
+        private static SurfacePreview CreateSurfacePreview(Texture source)
+        {
+            string thumbnail = CaptureTexturePreview(source, 128);
+            string tooltip = CaptureTexturePreview(source, 384);
+            return new SurfacePreview { Thumbnail = thumbnail, TooltipThumbnail = tooltip ?? thumbnail };
+        }
+
+        private SurfacePreview GetSurfaceTexturePreview(SurfacePrefab prefab, Entity surfaceEntity)
+        {
+            RenderedArea renderedArea = null;
+            if (prefab != null && prefab.TryGet<RenderedArea>(out renderedArea) && renderedArea != null)
+            {
+                if (renderedArea.m_BaseColorMap != null && renderedArea.m_BaseColorMap.guid.isValid)
+                {
+                    string assetGuid = renderedArea.m_BaseColorMap.guid.ToString();
+                    if (m_SurfaceAssetPreviewCache.TryGetValue(assetGuid, out SurfacePreview cachedAssetPreview))
+                    {
+                        return cachedAssetPreview;
+                    }
+
+                    TextureAsset textureAsset = AssetDatabase.global.GetAsset<TextureAsset>(renderedArea.m_BaseColorMap.guid);
+                    if (textureAsset != null)
+                    {
+                        bool loadedTextureAsset = false;
+                        try
+                        {
+                            Texture baseColorTexture = textureAsset.Load<Texture2D>(0);
+                            loadedTextureAsset = true;
+                            SurfacePreview assetPreview = CreateSurfacePreview(baseColorTexture);
+                            if (assetPreview.Thumbnail != null)
+                            {
+                                m_SurfaceAssetPreviewCache[assetGuid] = assetPreview;
+                                return assetPreview;
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            Mod.Log.Warn(exception, "Could not load the prefab texture for a surface preview: " + prefab.name);
+                        }
+                        finally
+                        {
+                            if (loadedTextureAsset)
+                            {
+                                textureAsset.Unload();
+                            }
+                        }
+                    }
+                }
+
+                SurfacePreview materialPreview = GetMaterialTexturePreview(renderedArea.m_Material);
+                if (materialPreview != null)
+                {
+                    return materialPreview;
+                }
+            }
+
+            // Some older/modded surfaces only expose their texture through a runtime area batch.
+            if (prefab == null || m_AreaBatchSystem == null)
+            {
+                return null;
+            }
+
+            if (surfaceEntity == Entity.Null || !EntityManager.HasComponent<RenderedAreaData>(surfaceEntity))
+            {
+                return null;
+            }
+            int batchIndex = EntityManager.GetComponentData<RenderedAreaData>(surfaceEntity).m_BatchIndex;
+            if (batchIndex < 0 || batchIndex >= m_AreaBatchSystem.GetBatchCount() ||
+                !m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material material, out _, out _, out _) || material == null)
+            {
+                return null;
+            }
+
+            return GetMaterialTexturePreview(material);
+        }
+
+        private SurfacePreview GetMaterialTexturePreview(Material material)
+        {
+            int property = Shader.PropertyToID("_BaseColorMap");
+            Texture texture = material != null && material.HasProperty(property) ? material.GetTexture(property) : null;
+            if (texture == null) return null;
+            int textureId = texture.GetInstanceID();
+            if (m_SurfacePreviewCache.TryGetValue(textureId, out SurfacePreview cached))
+            {
+                return cached;
+            }
+
+            SurfacePreview preview = CreateSurfacePreview(texture);
+            if (preview.Thumbnail != null)
+            {
+                m_SurfacePreviewCache[textureId] = preview;
+                return preview;
+            }
+            return null;
+        }
+
+        private void UpdateSurfaceCatalogPreviews(int maxPerFrame)
+        {
+            if (m_SurfaceCatalogPublished || m_SurfaceCatalogEntries == null || m_SurfaceCatalogBuildTask != null)
+            {
+                return;
+            }
+
+            int processed = 0;
+            while (m_SurfacePreviewQueueIndex < m_SurfacePreviewQueue.Count && processed < maxPerFrame)
+            {
+                SurfacePreviewRequest request = m_SurfacePreviewQueue[m_SurfacePreviewQueueIndex++];
+                processed++;
+                SurfacePreview preview = GetSurfaceTexturePreview(request.Prefab, request.SurfaceEntity);
+                if (preview == null)
+                {
+                    continue;
+                }
+
+                request.CatalogEntry["thumbnail"] = preview.Thumbnail;
+                request.CatalogEntry["tooltipThumbnail"] = preview.TooltipThumbnail;
+            }
+
+            if (m_SurfacePreviewQueueIndex >= m_SurfacePreviewQueue.Count)
+            {
+                m_SurfaceCatalog.Update(JSON.Dump(m_SurfaceCatalogEntries));
+                m_SurfaceCatalogPublished = true;
+                Mod.Log.InfoFormat(
+                    "Surface catalog published after texture previews: surfaces={0}, modSurfaces={1}",
+                    m_SurfaceCatalogSurfaceCount,
+                    m_SurfaceCatalogModSurfaceCount);
+            }
+        }
+
+        private static string CaptureTexturePreview(Texture source, int size)
+        {
+            if (source == null) return null;
+            RenderTexture renderTarget = null;
+            Texture2D readback = null;
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                renderTarget = RenderTexture.GetTemporary(size, size, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                Graphics.Blit(source, renderTarget);
+                RenderTexture.active = renderTarget;
+                readback = new Texture2D(size, size, TextureFormat.RGBA32, false, false);
+                readback.ReadPixels(new Rect(0, 0, size, size), 0, 0, false);
+                readback.Apply(false, false);
+                byte[] png = readback.EncodeToPNG();
+                return "data:image/png;base64," + Convert.ToBase64String(png);
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not generate a top-down surface texture preview");
+                return null;
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                if (readback != null) UnityEngine.Object.Destroy(readback);
+                if (renderTarget != null) RenderTexture.ReleaseTemporary(renderTarget);
+            }
+        }
+
         private void StartSurfaceCatalogBuild()
         {
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
@@ -441,9 +986,10 @@ namespace AutomaticTextureReplacer
                     }
 
                     string id = prefab.GetPrefabID().ToString();
-                    string name = prefab.name ?? id;
+                    bool isCustomSurface = m_CustomSurfacesById.TryGetValue(id, out CustomSurfaceInfo customSurface);
+                    string name = isCustomSurface ? customSurface.DisplayName : prefab.name ?? id;
                     bool isTransparentSurface = ReplacementRuleCatalog.IsTransparentSurface(name);
-                    if (IsExcludedSurfaceName(name) && !isTransparentSurface)
+                    if (IsExcludedSurfaceName(name) && !isTransparentSurface && !isCustomSurface)
                     {
                         continue;
                     }
@@ -457,20 +1003,22 @@ namespace AutomaticTextureReplacer
                     {
                         name = ReplacementRuleCatalog.TransparentSurfaceDisplayName;
                     }
-                    bool isMod = !prefab.isBuiltin && IsOwnedByMod(prefab);
-                    string assetIcon = isTransparentSurface ? null : GetAssetIcon(prefab);
+                    bool isMod = !isCustomSurface && !prefab.isBuiltin && IsOwnedByMod(prefab);
+                    string assetIcon = isTransparentSurface || isCustomSurface ? null : GetAssetIcon(prefab);
                     string menuPath = isTransparentSurface
                         ? "In-game / Transparent Surface"
+                        : isCustomSurface
+                            ? customSurface.RelativePath
                         : surfaceMenuPaths.TryGetValue(entity, out string registeredMenuPath)
                             ? registeredMenuPath
                             : GetSurfaceMenuPath(prefab);
-                    if (!isTransparentSurface && string.Equals(menuPath, "In-game asset", StringComparison.Ordinal))
+                    if (!isTransparentSurface && !isCustomSurface && string.Equals(menuPath, "In-game asset", StringComparison.Ordinal))
                     {
                         surfacesWithoutMenuSkipped++;
                         continue;
                     }
 
-                    string group = isTransparentSurface ? "In-game" : GetSurfaceGroup(prefab, menuPath);
+                    string group = isTransparentSurface ? "In-game" : isCustomSurface ? customSurface.Group : GetSurfaceGroup(prefab, menuPath);
                     if (isMod)
                     {
                         modSurfaceCount++;
@@ -487,20 +1035,35 @@ namespace AutomaticTextureReplacer
                             isMod);
                     }
 
-                    catalog.Add(new Dictionary<string, string>
+                    var catalogEntry = new Dictionary<string, string>
                     {
                         ["id"] = id,
                         ["name"] = name,
                         ["thumbnail"] = isTransparentSurface
                             ? "coui://replacementsolutions/images/TransparentSurface.svg"
-                            : GetSurfaceThumbnail(prefab, assetIcon),
+                            : isCustomSurface
+                                ? customSurface.Thumbnail
+                                : GetSurfaceThumbnail(prefab, assetIcon),
                         ["tooltipThumbnail"] = isTransparentSurface
                             ? "coui://replacementsolutions/images/TransparentSurface.svg"
-                            : GetLargeThumbnail(prefab, assetIcon),
+                            : isCustomSurface
+                                ? customSurface.TooltipThumbnail
+                                : GetLargeThumbnail(prefab, assetIcon),
                         ["group"] = group,
                         ["menuPath"] = menuPath,
                         ["isMod"] = isMod.ToString(),
-                    });
+                        ["customTexture"] = isCustomSurface.ToString(),
+                    };
+                    catalog.Add(catalogEntry);
+                    if (!isTransparentSurface && !isCustomSurface)
+                    {
+                        m_SurfacePreviewQueue.Add(new SurfacePreviewRequest
+                        {
+                            Prefab = prefab,
+                            SurfaceEntity = entity,
+                            CatalogEntry = catalogEntry,
+                        });
+                    }
                 }
             }
 
@@ -512,8 +1075,10 @@ namespace AutomaticTextureReplacer
                 surfacesWithoutMenuSkipped,
                 m_SurfaceQuery.CalculateEntityCount(),
                 surfacesWithTreeSuppression,
-                !shouldSuppressTrees);            m_SurfaceCatalogSurfaceCount = catalog.Count;
+                !shouldSuppressTrees);
+            m_SurfaceCatalogSurfaceCount = catalog.Count;
             m_SurfaceCatalogModSurfaceCount = modSurfaceCount;
+            m_SurfaceCatalogEntries = catalog;
             m_SurfaceCatalogBuildTask = Task.Run(() => catalog
                 .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)
                 .ToList())
@@ -872,6 +1437,7 @@ namespace AutomaticTextureReplacer
         private static bool IsExcludedSurfaceName(string name)
         {
             return name.EndsWith("Placeholder", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "Clip Surface", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "Surface Area", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "Missing Area", StringComparison.OrdinalIgnoreCase);
         }

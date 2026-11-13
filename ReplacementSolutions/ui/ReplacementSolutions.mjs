@@ -267,6 +267,7 @@ const register = (moduleRegistry) => {
       if (targetPicker) {
         return catalog.filter((surface) => {
           if (surface.sourceOnly === true || surface.sourceOnly === "True") return false;
+          if (surface.customTexture === true || surface.customTexture === "True") return true;
           const groupName = surface.group || "In-game asset";
           if (groupName === "In-game" && !showInGameSurfacesAsTargets) return selectedIds.has(surface.id);
           if (groupName === "Special Industries" && !showSpecialIndustrySurfacesAsTargets) return selectedIds.has(surface.id);

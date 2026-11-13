@@ -24,6 +24,7 @@
 		<Reference Include="Colossal.Localization"><Private>false</Private></Reference>
 		<Reference Include="Unity.InputSystem"><Private>false</Private></Reference>
 		<Reference Include="UnityEngine.CoreModule"><Private>false</Private></Reference>
+		<Reference Include="UnityEngine.ImageConversionModule"><Private>false</Private></Reference>
 		<Reference Include="Unity.Burst"><Private>false</Private></Reference>
 		<Reference Include="Unity.Collections"><Private>false</Private></Reference>
 		<Reference Include="Unity.Entities"><Private>false</Private></Reference>
