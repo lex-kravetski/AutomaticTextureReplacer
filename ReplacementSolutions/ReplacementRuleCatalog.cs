@@ -23,6 +23,7 @@ namespace AutomaticTextureReplacer
             int? selectedRuleId = null)
         {
             var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            Dictionary<string, List<string>> surfaceIdsByStableName = CreateStableSurfaceIdLookup(surfacesById.Keys);
             foreach (SurfaceReplacementSystem.SurfaceReplacementRule rule in rules ?? Enumerable.Empty<SurfaceReplacementSystem.SurfaceReplacementRule>())
             {
                 if (rule == null || rule.sourceSurfaceIds == null || rule.targetSurfaceIds == null ||
@@ -33,22 +34,24 @@ namespace AutomaticTextureReplacer
 
                 foreach (string sourceId in rule.sourceSurfaceIds)
                 {
-                    if (string.IsNullOrEmpty(sourceId) || !surfacesById.ContainsKey(sourceId))
+                    string resolvedSourceId = ResolveSurfaceId(sourceId, surfacesById, surfaceIdsByStableName);
+                    if (resolvedSourceId == null)
                     {
                         continue;
                     }
 
-                    if (!result.TryGetValue(sourceId, out HashSet<string> targets))
+                    if (!result.TryGetValue(resolvedSourceId, out HashSet<string> targets))
                     {
                         targets = new HashSet<string>(StringComparer.Ordinal);
-                        result.Add(sourceId, targets);
+                        result.Add(resolvedSourceId, targets);
                     }
 
                     foreach (string targetId in rule.targetSurfaceIds)
                     {
-                        if (!string.IsNullOrEmpty(targetId) && surfacesById.ContainsKey(targetId) && targetId != sourceId)
+                        string resolvedTargetId = ResolveSurfaceId(targetId, surfacesById, surfaceIdsByStableName);
+                        if (resolvedTargetId != null && resolvedTargetId != resolvedSourceId)
                         {
-                            targets.Add(targetId);
+                            targets.Add(resolvedTargetId);
                         }
                     }
                 }
@@ -65,6 +68,7 @@ namespace AutomaticTextureReplacer
             int? selectedRuleId = null)
         {
             var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            Dictionary<string, List<string>> surfaceIdsByStableName = CreateStableSurfaceIdLookup(surfacesById.Keys);
             foreach (SurfaceReplacementSystem.AreaReplacementRule rule in rules ?? Enumerable.Empty<SurfaceReplacementSystem.AreaReplacementRule>())
             {
                 if (rule == null || rule.sourceAreaIds == null || rule.targetSurfaceIds == null ||
@@ -88,15 +92,72 @@ namespace AutomaticTextureReplacer
 
                     foreach (string targetId in rule.targetSurfaceIds)
                     {
-                        if (!string.IsNullOrEmpty(targetId) && surfacesById.ContainsKey(targetId))
+                        string resolvedTargetId = ResolveSurfaceId(targetId, surfacesById, surfaceIdsByStableName);
+                        if (resolvedTargetId != null)
                         {
-                            targets.Add(targetId);
+                            targets.Add(resolvedTargetId);
                         }
                     }
                 }
             }
 
             return result;
+        }
+
+        private static Dictionary<string, List<string>> CreateStableSurfaceIdLookup(IEnumerable<string> surfaceIds)
+        {
+            var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (string surfaceId in surfaceIds ?? Enumerable.Empty<string>())
+            {
+                string stableId = GetStableSurfaceId(surfaceId);
+                if (string.IsNullOrEmpty(stableId))
+                {
+                    continue;
+                }
+
+                if (!result.TryGetValue(stableId, out List<string> matches))
+                {
+                    matches = new List<string>();
+                    result.Add(stableId, matches);
+                }
+                matches.Add(surfaceId);
+            }
+            return result;
+        }
+
+        private static string ResolveSurfaceId(
+            string requestedId,
+            IReadOnlyDictionary<string, Entity> surfacesById,
+            IReadOnlyDictionary<string, List<string>> surfaceIdsByStableName)
+        {
+            if (string.IsNullOrEmpty(requestedId))
+            {
+                return null;
+            }
+            if (surfacesById.ContainsKey(requestedId))
+            {
+                return requestedId;
+            }
+
+            string stableId = GetStableSurfaceId(requestedId);
+            if (stableId != null && surfaceIdsByStableName.TryGetValue(stableId, out List<string> matches) && matches.Count == 1)
+            {
+                return matches[0];
+            }
+            return null;
+        }
+
+        private static string GetStableSurfaceId(string id)
+        {
+            if (string.IsNullOrEmpty(id))
+            {
+                return null;
+            }
+
+            int hashSeparator = id.LastIndexOf(" (", StringComparison.Ordinal);
+            return hashSeparator > 0 && id.EndsWith(")", StringComparison.Ordinal)
+                ? id.Substring(0, hashSeparator)
+                : id;
         }
     }
 }

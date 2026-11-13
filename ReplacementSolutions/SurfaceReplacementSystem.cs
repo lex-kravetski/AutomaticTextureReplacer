@@ -129,13 +129,13 @@ namespace AutomaticTextureReplacer
         private readonly List<PendingBatchDiagnostic> m_PendingBatchDiagnostics = new List<PendingBatchDiagnostic>();
         private readonly List<PendingRevertChange> m_PendingRevertChanges = new List<PendingRevertChange>();
         private readonly List<PendingConstructionBatchRefresh> m_PendingConstructionBatchRefreshes = new List<PendingConstructionBatchRefresh>();
-        private readonly HashSet<Entity> m_ExpansionSuppressedAreas = new HashSet<Entity>();
         private readonly Dictionary<Entity, Entity> m_ReplacementMaterialSources = new Dictionary<Entity, Entity>();
         private readonly HashSet<Entity> m_LoggedConstructionGeometry = new HashSet<Entity>();
         private readonly HashSet<Entity> m_ProcessedCreatedSurfaceAreas = new HashSet<Entity>();
         private readonly HashSet<Entity> m_QueuedConstructionSurfaceAreas = new HashSet<Entity>();
         private readonly Dictionary<Entity, UnityEngine.Material> m_AppliedReplacementMaterials = new Dictionary<Entity, UnityEngine.Material>();
         private readonly Dictionary<Entity, Entity> m_AppliedReplacementMaterialSources = new Dictionary<Entity, Entity>();
+        private readonly HashSet<string> m_LoggedDecalMaskIssues = new HashSet<string>();
         private readonly HashSet<Entity> m_IndustryAreasScheduledThisFrame = new HashSet<Entity>();
         private readonly HashSet<Entity> m_IndustryAreasRevertedThisFrame = new HashSet<Entity>();
         private readonly HashSet<Entity> m_IndustryPrefabsWithoutInitialSubArea = new HashSet<Entity>();
@@ -497,17 +497,12 @@ namespace AutomaticTextureReplacer
         protected override void OnUpdate()
         {
             ProcessNewBuildingSurfaces();
-            // Copy the entries before iterating. Reapplying the material settings can
+            // Copy the entries before iterating. Reapplying source edge settings can
             // discover/cache a replacement and add an entry to the dictionary, which
             // must not mutate the collection being enumerated.
             foreach (KeyValuePair<Entity, Entity> replacement in m_ReplacementMaterialSources.ToArray())
             {
-                CopyReplacementEdgeMaterialSettings(replacement.Value, replacement.Key);
-            }
-
-            foreach (Entity area in m_ExpansionSuppressedAreas.ToArray())
-            {
-                ClearReplacementAreaExpansion(area);
+                CopyReplacementDecalLayerMask(replacement.Value, replacement.Key);
             }
 
             m_IndustryAreasScheduledThisFrame.Clear();
@@ -1330,7 +1325,6 @@ namespace AutomaticTextureReplacer
         {
             ResetConstructionBatchRefreshes();
             m_PendingConstructionBatchRefreshes.Clear();
-            m_ExpansionSuppressedAreas.Clear();
             m_ReplacementMaterialSources.Clear();
             m_AppliedReplacementMaterials.Clear();
             m_AppliedReplacementMaterialSources.Clear();
@@ -1524,10 +1518,17 @@ namespace AutomaticTextureReplacer
                 originalSpecialIndustryPrefab);
         }
 
-        private void PrepareSurfaceReplacement(Entity area, Entity sourcePrefab, Entity targetPrefab, string sourceName, string targetName)
+        private void PrepareSurfaceReplacement(
+            Entity area,
+            Entity sourcePrefab,
+            Entity targetPrefab,
+            string sourceName,
+            string targetName)
         {
-            ClearReplacementAreaExpansion(area);
-            CopyReplacementEdgeMaterialSettings(sourcePrefab, targetPrefab);
+            // Keep the target prefab's geometric expand amount. Copying the source
+            // amount can make mod textures extend past the road-facing edge; the
+            // per-area Expand buffer already carries the contour adjustments.
+            CopyReplacementDecalLayerMask(sourcePrefab, targetPrefab);
             QueueBatchDiagnostic(area, sourcePrefab, targetPrefab, sourceName, targetName);
         }
 
@@ -1616,48 +1617,32 @@ namespace AutomaticTextureReplacer
             return true;
         }
 
-        private void ClearReplacementAreaExpansion(Entity area)
-        {
-            if (area == Entity.Null || !EntityManager.Exists(area))
-            {
-                return;
-            }
-
-            // Newly created areas can receive their Expand buffer after the
-            // replacement is observed. Keep tracking the area so a later frame
-            // clears the buffer as soon as the game creates it.
-            m_ExpansionSuppressedAreas.Add(area);
-            if (!EntityManager.HasBuffer<Game.Areas.Expand>(area))
-            {
-                return;
-            }
-
-            DynamicBuffer<Game.Areas.Expand> expands = EntityManager.GetBuffer<Game.Areas.Expand>(area);
-            for (int i = 0; i < expands.Length; i++)
-            {
-                expands[i] = default(Game.Areas.Expand);
-            }
-        }
-
-        private void CopyReplacementEdgeMaterialSettings(Entity sourcePrefab, Entity targetPrefab)
+        private void CopyReplacementDecalLayerMask(Entity sourcePrefab, Entity targetPrefab)
         {
             if (sourcePrefab == Entity.Null || targetPrefab == Entity.Null ||
-                !EntityManager.HasComponent<RenderedAreaData>(targetPrefab) ||
-                !m_PrefabSystem.TryGetPrefab<PrefabBase>(sourcePrefab, out PrefabBase source) ||
-                source == null || !source.TryGet<RenderedArea>(out RenderedArea sourceRendered) || sourceRendered == null)
+                !EntityManager.HasComponent<RenderedAreaData>(targetPrefab))
             {
+                return;
+            }
+
+            if (!m_PrefabSystem.TryGetPrefab<PrefabBase>(sourcePrefab, out PrefabBase source) || source == null)
+            {
+                LogDecalMaskIssue(sourcePrefab, targetPrefab, "source prefab object unavailable");
+                return;
+            }
+            if (!source.TryGet<RenderedArea>(out RenderedArea sourceRendered) || sourceRendered == null)
+            {
+                LogDecalMaskIssue(sourcePrefab, targetPrefab, "source RenderedArea component unavailable");
                 return;
             }
 
             m_ReplacementMaterialSources[targetPrefab] = sourcePrefab;
 
-            int sourceBatchIndex = EntityManager.HasComponent<RenderedAreaData>(sourcePrefab)
-                ? EntityManager.GetComponentData<RenderedAreaData>(sourcePrefab).m_BatchIndex
-                : -1;
             int batchIndex = EntityManager.GetComponentData<RenderedAreaData>(targetPrefab).m_BatchIndex;
             if (!m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out UnityEngine.Material material, out _, out _, out _) ||
                 material == null)
             {
+                LogDecalMaskIssue(sourcePrefab, targetPrefab, "target area batch material unavailable; will retry");
                 return;
             }
 
@@ -1671,30 +1656,40 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            material.SetFloat(UnityEngine.Shader.PropertyToID("colossal_EdgeNormal"), sourceRendered.m_EdgeNormal);
-            material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeFadeRange"), new UnityEngine.Vector4(sourceRendered.m_EdgeFadeRange.x, sourceRendered.m_EdgeFadeRange.y, 0f, 0f));
-            material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeNormalRange"), new UnityEngine.Vector4(sourceRendered.m_EdgeNormalRange.x, sourceRendered.m_EdgeNormalRange.y, 0f, 0f));
-            material.SetVector(UnityEngine.Shader.PropertyToID("colossal_EdgeNoise"), new UnityEngine.Vector4(sourceRendered.m_EdgeNoise.x, sourceRendered.m_EdgeNoise.y, 0f, 0f));
-            if (sourceBatchIndex >= 0 &&
-                m_AreaBatchSystem.GetAreaBatch(sourceBatchIndex, out _, out _, out _, out UnityEngine.Material sourceMaterial, out _, out _, out _) &&
-                sourceMaterial != null)
+            int decalLayerMask = UnityEngine.Shader.PropertyToID("colossal_DecalLayerMask");
+            bool hasDecalLayerMask = material.HasProperty(decalLayerMask);
+            if (hasDecalLayerMask)
             {
-                int areaParameters = UnityEngine.Shader.PropertyToID("colossal_AreaParameters");
-                if (sourceMaterial.HasProperty(areaParameters))
-                {
-                    material.SetVector(areaParameters, sourceMaterial.GetVector(areaParameters));
-                }
+                material.SetFloat(decalLayerMask, math.asfloat((int)sourceRendered.m_DecalLayerMask));
             }
+
             m_AppliedReplacementMaterials[targetPrefab] = material;
             m_AppliedReplacementMaterialSources[targetPrefab] = sourcePrefab;
-            Mod.Log.InfoFormat(
-                "Copied source surface edge material settings: source='{0}', target='{1}', batch={2}, edgeNormal={3}, fade={4}/{5}",
-                m_PrefabSystem.GetPrefabName(sourcePrefab),
-                m_PrefabSystem.GetPrefabName(targetPrefab),
-                batchIndex,
-                sourceRendered.m_EdgeNormal,
-                sourceRendered.m_EdgeFadeRange.x,
-                sourceRendered.m_EdgeFadeRange.y);
+            if (m_PrefabSystem.TryGetPrefab<PrefabBase>(targetPrefab, out PrefabBase target) &&
+                target != null && target.TryGet<RenderedArea>(out RenderedArea targetRendered) && targetRendered != null)
+            {
+                Mod.Log.InfoFormat(
+                    "Copied source surface decal layer mask: source='{0}', mask={1}; target='{2}', previousMask={3}, materialHasMask={4}, batch={5}",
+                    m_PrefabSystem.GetPrefabName(sourcePrefab),
+                    sourceRendered.m_DecalLayerMask,
+                    m_PrefabSystem.GetPrefabName(targetPrefab),
+                    targetRendered.m_DecalLayerMask,
+                    hasDecalLayerMask,
+                    batchIndex);
+            }
+        }
+
+        private void LogDecalMaskIssue(Entity sourcePrefab, Entity targetPrefab, string reason)
+        {
+            string key = sourcePrefab.Index + ":" + targetPrefab.Index + ":" + reason;
+            if (m_LoggedDecalMaskIssues.Add(key))
+            {
+                Mod.Log.WarnFormat(
+                    "Could not copy replacement surface decal layer mask: source='{0}', target='{1}', reason={2}",
+                    m_PrefabSystem.GetPrefabName(sourcePrefab),
+                    m_PrefabSystem.GetPrefabName(targetPrefab),
+                    reason);
+            }
         }
 
         private bool TryGetDefaultSurfacePrefab(
