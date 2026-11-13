@@ -14,6 +14,7 @@ using Game.Rendering;
 using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using PrefabSubArea = Game.Prefabs.SubArea;
 using PrefabSubAreaNode = Game.Prefabs.SubAreaNode;
@@ -34,6 +35,17 @@ namespace AutomaticTextureReplacer
         {
             public Entity Area;
             public Entity DefaultPrefab;
+        }
+
+        private sealed class TemporaryPreviewReplacementTrace
+        {
+            public Entity InitialOwner;
+            public Entity OriginalPrefab;
+            public Entity TargetPrefab;
+            public int OriginalBatchIndex;
+            public int ReplacedAtFrame;
+            public bool CleanupFlagsLogged;
+            public bool LongLivedWarningLogged;
         }
 
         private sealed class PendingBatchDiagnostic
@@ -130,6 +142,7 @@ namespace AutomaticTextureReplacer
         private readonly List<PendingBatchDiagnostic> m_PendingBatchDiagnostics = new List<PendingBatchDiagnostic>();
         private readonly List<PendingRevertChange> m_PendingRevertChanges = new List<PendingRevertChange>();
         private readonly List<PendingConstructionBatchRefresh> m_PendingConstructionBatchRefreshes = new List<PendingConstructionBatchRefresh>();
+        private readonly Dictionary<Entity, TemporaryPreviewReplacementTrace> m_TemporaryPreviewReplacementTraces = new Dictionary<Entity, TemporaryPreviewReplacementTrace>();
         private readonly Dictionary<Entity, Entity> m_ReplacementMaterialSources = new Dictionary<Entity, Entity>();
         private readonly HashSet<Entity> m_LoggedConstructionGeometry = new HashSet<Entity>();
         private readonly HashSet<Entity> m_ProcessedCreatedSurfaceAreas = new HashSet<Entity>();
@@ -165,6 +178,9 @@ namespace AutomaticTextureReplacer
 
         private static readonly FieldInfo s_NativeBatchDataField = typeof(AreaBatchSystem).GetField(
             "m_NativeBatchData",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly FieldInfo s_AreaBatchDataDependenciesField = typeof(AreaBatchSystem).GetField(
+            "m_DataDependencies",
             BindingFlags.Instance | BindingFlags.NonPublic);
 
         public static void QueueReplacement(string requestedRuleId, string rulesJson)
@@ -524,6 +540,7 @@ namespace AutomaticTextureReplacer
         protected override void OnUpdate()
         {
             ProcessNewBuildingSurfaces();
+            TraceTemporaryPreviewReplacementLifetimes();
             // Copy the entries before iterating. Reapplying source edge settings can
             // discover/cache a replacement and add an entry to the dictionary, which
             // must not mutate the collection being enumerated.
@@ -547,6 +564,7 @@ namespace AutomaticTextureReplacer
             }
 
             ProcessPendingRevertRefresh();
+            ProcessTemporarySurfacePreviews();
             ProcessPendingConstructionBatchRefreshes();
             ProcessCreatedSpecialIndustryFields();
             ProcessUpdatedIndustrySurfaceOverlays();
@@ -568,6 +586,168 @@ namespace AutomaticTextureReplacer
                 }
             }
             ProcessDeferredIndustryRootClones();
+            ProcessPendingTemporarySurfaceReplacements();
+        }
+
+        private void ProcessPendingTemporarySurfaceReplacements()
+        {
+            TemporaryAreaBatchReleaseQueue.Request[] requests = TemporaryAreaBatchReleaseQueue.TakePending();
+            if (requests.Length == 0)
+            {
+                return;
+            }
+
+            List<TemporaryAreaBatchReleaseQueue.Request> releases = new List<TemporaryAreaBatchReleaseQueue.Request>();
+            foreach (TemporaryAreaBatchReleaseQueue.Request request in requests)
+            {
+                if (!IsReplacementAreaUsable(request.Area) || !EntityManager.HasComponent<Temp>(request.Area))
+                {
+                    Mod.Log.InfoFormat(
+                        "Temporary surface replacement skipped because the preview entity is no longer usable: area={0}, source='{1}', target='{2}'",
+                        request.Area,
+                        request.SourceName,
+                        request.TargetName);
+                    continue;
+                }
+
+                if (!EntityManager.HasComponent<Batch>(request.Area))
+                {
+                    continue;
+                }
+
+                Batch batch = EntityManager.GetComponentData<Batch>(request.Area);
+                if (batch.m_AllocatedSize <= 0)
+                {
+                    continue;
+                }
+
+                batch.m_VisibleCount = Math.Max(1, batch.m_VisibleCount);
+                EntityManager.SetComponentData(request.Area, batch);
+                EntityManager.RemoveComponent<Temp>(request.Area);
+                EntityManager.AddComponent<Deleted>(request.Area);
+                releases.Add(request);
+            }
+
+            if (releases.Count > 0)
+            {
+                Mod.Log.InfoFormat(
+                    "Running AreaBatchSystem once to release old temporary surface allocations: count={0}",
+                    releases.Count);
+                try
+                {
+                    // AreaBatchSystem's normal update query excludes Temp areas,
+                    // but its Deleted path is the supported per-area cleanup:
+                    // it releases m_AreaBufferAllocator and removes the area's
+                    // entry from the old batch's AreaMetaData. Resetting Batch
+                    // before this path leaks that allocation; keeping the old
+                    // Batch while changing PrefabRef leaves its old batch and
+                    // metadata indexes attached to the new prefab and can crash.
+                    // Run this synchronously and complete m_DataDependencies so
+                    // Deleted can be removed and the target PrefabRef assigned
+                    // before the placement tool destroys its temporary entity.
+                    m_AreaBatchSystem.Update();
+                    CompleteAreaBatchDataDependencies();
+                }
+                catch (Exception exception)
+                {
+                    Mod.Log.Error(exception, "Synchronous AreaBatchSystem cleanup failed for temporary surfaces");
+                    RestoreTemporarySurfaceMarkers(releases);
+                    return;
+                }
+            }
+
+            int replaced = 0;
+            int releaseFailed = 0;
+            foreach (TemporaryAreaBatchReleaseQueue.Request request in requests)
+            {
+                if (!EntityManager.Exists(request.Area))
+                {
+                    Mod.Log.WarnFormat(
+                        "Temporary surface disappeared during synchronous batch cleanup: area={0}, source='{1}', target='{2}'",
+                        request.Area,
+                        request.SourceName,
+                        request.TargetName);
+                    continue;
+                }
+
+                bool releaseWasRequested = releases.Contains(request);
+                if (releaseWasRequested &&
+                    (!EntityManager.HasComponent<Batch>(request.Area) ||
+                     EntityManager.GetComponentData<Batch>(request.Area).m_AllocatedSize != 0))
+                {
+                    releaseFailed++;
+                    RestoreTemporarySurfaceMarkers(new[] { request });
+                    Mod.Log.WarnFormat(
+                        "AreaBatchSystem did not release the temporary area's allocation; keeping original prefab: area={0}, allocated={1}",
+                        request.Area,
+                        EntityManager.HasComponent<Batch>(request.Area)
+                            ? EntityManager.GetComponentData<Batch>(request.Area).m_AllocatedSize
+                            : -1);
+                    continue;
+                }
+
+                if (EntityManager.HasComponent<Deleted>(request.Area))
+                {
+                    EntityManager.RemoveComponent<Deleted>(request.Area);
+                }
+
+                if (CompleteTemporarySurfaceReplacement(
+                    request.Area,
+                    request.SourcePrefab,
+                    request.TargetPrefab,
+                    request.SourceName,
+                    request.TargetName,
+                    request.InitialOwner,
+                    request.OriginalBatchIndex,
+                    request.OriginalTemp,
+                    hadTemp: true))
+                {
+                    replaced++;
+                }
+            }
+
+            Mod.Log.InfoFormat(
+                "Temporary surface batch release pass finished: requested={0}, released={1}, replaced={2}, releaseFailed={3}",
+                requests.Length,
+                releases.Count,
+                replaced,
+                releaseFailed);
+        }
+
+        private void CompleteAreaBatchDataDependencies()
+        {
+            if (s_AreaBatchDataDependenciesField == null)
+            {
+                throw new InvalidOperationException("AreaBatchSystem.m_DataDependencies was not found");
+            }
+
+            object boxedHandle = s_AreaBatchDataDependenciesField.GetValue(m_AreaBatchSystem);
+            if (!(boxedHandle is JobHandle handle))
+            {
+                throw new InvalidOperationException("AreaBatchSystem.m_DataDependencies is not a JobHandle");
+            }
+
+            handle.Complete();
+        }
+
+        private void RestoreTemporarySurfaceMarkers(IEnumerable<TemporaryAreaBatchReleaseQueue.Request> requests)
+        {
+            foreach (TemporaryAreaBatchReleaseQueue.Request request in requests)
+            {
+                if (!EntityManager.Exists(request.Area))
+                {
+                    continue;
+                }
+
+                if (EntityManager.HasComponent<Deleted>(request.Area))
+                {
+                    EntityManager.RemoveComponent<Deleted>(request.Area);
+                }
+                if (!EntityManager.HasComponent<Temp>(request.Area))
+                {
+                    EntityManager.AddComponentData(request.Area, request.OriginalTemp);
+                }
+            }
         }
 
         private void ProcessDeferredIndustryRootClones()
@@ -677,6 +857,196 @@ namespace AutomaticTextureReplacer
                         m_PrefabSystem.GetPrefabName(target));
                     Mod.Log.InfoFormat("New building surface replacement scheduled after creation: area={0}, building={1}, source='{2}', target='{3}'", area, building, m_PrefabSystem.GetPrefabName(source), m_PrefabSystem.GetPrefabName(target));
                 }
+            }
+        }
+
+        private void ProcessTemporarySurfacePreviews()
+        {
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings || m_TempConstructionSurfaceQuery.IsEmptyIgnoreFilter)
+            {
+                return;
+            }
+
+            NewBuildingSurfaceReplacementSystem rules = World.GetExistingSystemManaged<NewBuildingSurfaceReplacementSystem>();
+            if (rules == null)
+            {
+                return;
+            }
+
+            using (NativeArray<Entity> areas = m_TempConstructionSurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                int staleAreas = 0;
+                List<string> staleAreaSamples = new List<string>(5);
+                foreach (Entity area in areas)
+                {
+                    // Preset tools can destroy and recreate their preview entities
+                    // within a few frames. Revalidate every entity immediately
+                    // before reading or changing its PrefabRef.
+                    if (!EntityManager.Exists(area) || EntityManager.HasComponent<Deleted>(area) ||
+                        !EntityManager.HasComponent<Temp>(area) || !EntityManager.HasComponent<PrefabRef>(area))
+                    {
+                        staleAreas++;
+                        if (staleAreaSamples.Count < 5)
+                        {
+                            staleAreaSamples.Add(area.ToString());
+                        }
+                        continue;
+                    }
+
+                    Temp temp = EntityManager.GetComponentData<Temp>(area);
+                    if ((temp.m_Flags & (TempFlags.Delete | TempFlags.Hidden)) != 0)
+                    {
+                        continue;
+                    }
+
+                    Entity source = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                    if (source == Entity.Null || !rules.TryChooseSurfaceReplacement(source, out Entity target) ||
+                        target == Entity.Null || target == source || !IsReplacementAreaUsable(area))
+                    {
+                        continue;
+                    }
+
+                    ApplySurfacePrefabReplacement(
+                        area,
+                        source,
+                        target,
+                        default(EntityCommandBuffer),
+                        m_PrefabSystem.GetPrefabName(source),
+                        m_PrefabSystem.GetPrefabName(target));
+                }
+
+                if (staleAreas > 0)
+                {
+                    Mod.Log.WarnFormat(
+                        "Temporary surface query contained entities that were already gone or no longer usable: count={0}, sample=[{1}]",
+                        staleAreas,
+                        string.Join(", ", staleAreaSamples));
+                }
+            }
+        }
+
+        private void TraceTemporaryPreviewReplacementLifetimes()
+        {
+            if (m_TemporaryPreviewReplacementTraces.Count == 0)
+            {
+                return;
+            }
+
+            int frame = UnityEngine.Time.frameCount;
+            if (frame % 30 != 0)
+            {
+                return;
+            }
+
+            List<Entity> completed = null;
+            foreach (KeyValuePair<Entity, TemporaryPreviewReplacementTrace> pair in m_TemporaryPreviewReplacementTraces)
+            {
+                Entity area = pair.Key;
+                TemporaryPreviewReplacementTrace trace = pair.Value;
+                if (!EntityManager.Exists(area))
+                {
+                    Mod.Log.InfoFormat(
+                        "Temporary preview surface entity was destroyed after replacement: area={0}, ownerAtReplacement={1}, source='{2}', target='{3}', framesAlive={4}",
+                        area,
+                        trace.InitialOwner,
+                        GetPrefabNameSafe(trace.OriginalPrefab),
+                        GetPrefabNameSafe(trace.TargetPrefab),
+                        frame - trace.ReplacedAtFrame);
+                    (completed ?? (completed = new List<Entity>())).Add(area);
+                    continue;
+                }
+
+                if (EntityManager.HasComponent<Deleted>(area))
+                {
+                    Mod.Log.InfoFormat(
+                        "Temporary preview surface entity entered Deleted state after replacement: area={0}, ownerAtReplacement={1}, source='{2}', target='{3}', framesAlive={4}",
+                        area,
+                        trace.InitialOwner,
+                        GetPrefabNameSafe(trace.OriginalPrefab),
+                        GetPrefabNameSafe(trace.TargetPrefab),
+                        frame - trace.ReplacedAtFrame);
+                    (completed ?? (completed = new List<Entity>())).Add(area);
+                    continue;
+                }
+
+                if (!EntityManager.HasComponent<Temp>(area))
+                {
+                    Mod.Log.InfoFormat(
+                        "Temporary preview surface became non-temporary after replacement: area={0}, ownerAtReplacement={1}, source='{2}', target='{3}', framesAlive={4}",
+                        area,
+                        trace.InitialOwner,
+                        GetPrefabNameSafe(trace.OriginalPrefab),
+                        GetPrefabNameSafe(trace.TargetPrefab),
+                        frame - trace.ReplacedAtFrame);
+                    (completed ?? (completed = new List<Entity>())).Add(area);
+                    continue;
+                }
+
+                Temp temp = EntityManager.GetComponentData<Temp>(area);
+                if ((temp.m_Flags & (TempFlags.Delete | TempFlags.Hidden)) != 0 && !trace.CleanupFlagsLogged)
+                {
+                    Mod.Log.InfoFormat(
+                        "Temporary preview surface received cleanup flags after replacement: area={0}, ownerAtReplacement={1}, source='{2}', target='{3}', tempFlags={4}, framesAlive={5}",
+                        area,
+                        trace.InitialOwner,
+                        GetPrefabNameSafe(trace.OriginalPrefab),
+                        GetPrefabNameSafe(trace.TargetPrefab),
+                        temp.m_Flags,
+                        frame - trace.ReplacedAtFrame);
+                    trace.CleanupFlagsLogged = true;
+                }
+
+                int framesAlive = frame - trace.ReplacedAtFrame;
+                if (framesAlive < 300 || trace.LongLivedWarningLogged)
+                {
+                    continue;
+                }
+
+                Entity currentPrefab = EntityManager.HasComponent<PrefabRef>(area)
+                    ? EntityManager.GetComponentData<PrefabRef>(area).m_Prefab
+                    : Entity.Null;
+                Entity currentOwner = EntityManager.HasComponent<Owner>(area)
+                    ? EntityManager.GetComponentData<Owner>(area).m_Owner
+                    : Entity.Null;
+                bool hasBatch = EntityManager.HasComponent<Batch>(area);
+                int batchIndex = hasBatch ? EntityManager.GetComponentData<Batch>(area).m_BatchIndex : -1;
+                Mod.Log.WarnFormat(
+                    "Temporary preview surface is still alive 300 frames after replacement: area={0}, ownerAtReplacement={1}, currentOwner={2}, originalBatch={3}, currentBatch={4}, source='{5}', target='{6}', currentPrefab='{7}', tempFlags={8}",
+                    area,
+                    trace.InitialOwner,
+                    currentOwner,
+                    trace.OriginalBatchIndex,
+                    batchIndex,
+                    GetPrefabNameSafe(trace.OriginalPrefab),
+                    GetPrefabNameSafe(trace.TargetPrefab),
+                    GetPrefabNameSafe(currentPrefab),
+                    temp.m_Flags);
+                trace.LongLivedWarningLogged = true;
+            }
+
+            if (completed != null)
+            {
+                foreach (Entity area in completed)
+                {
+                    m_TemporaryPreviewReplacementTraces.Remove(area);
+                }
+            }
+        }
+
+        private string GetPrefabNameSafe(Entity prefab)
+        {
+            if (prefab == Entity.Null || !EntityManager.Exists(prefab))
+            {
+                return "<missing>";
+            }
+
+            try
+            {
+                return m_PrefabSystem.GetPrefabName(prefab);
+            }
+            catch
+            {
+                return "<unavailable>";
             }
         }
 
@@ -1514,6 +1884,20 @@ namespace AutomaticTextureReplacer
                 noDefaultMapping);
         }
 
+        /// <summary>
+        /// Shared dispatcher for replacing the prefab of an existing area entity.
+        /// Ordinary building and hand-painted surfaces, plus extractor fields that
+        /// already exist as child Lot entities (such as farm/fish fields), use this
+        /// path. The latter pass originalSpecialIndustryPrefab so the original Lot
+        /// can be restored and its extractor identity retained.
+        ///
+        /// Root-batch extractors are different: their rendered surface is stored on
+        /// the root Lot prefab itself. Those must keep that root PrefabRef and use
+        /// TryQueueIndustrySurfaceOverlay to add an owner-linked child surface; a
+        /// direct root swap would discard the Lot's ExtractorAreaData and area type.
+        /// Temporary preview entities are routed through the same-update batch
+        /// release queue below because placement tools may destroy them immediately.
+        /// </summary>
         private bool ApplySurfacePrefabReplacement(
             Entity area,
             Entity sourcePrefab,
@@ -1531,22 +1915,43 @@ namespace AutomaticTextureReplacer
 
             if (EntityManager.HasComponent<Temp>(area))
             {
-                // Placement tools can destroy temporary surfaces before the
-                // ToolOutputBarrier plays its ECB. Update the existing data
-                // component immediately while the entity is known to be alive,
-                // so no deferred command can target a deleted preset object.
-                PrepareSurfaceReplacement(area, sourcePrefab, targetPrefab, sourceName, targetName);
-                EntityManager.SetComponentData(area, new PrefabRef { m_Prefab = targetPrefab });
+                // Preview entities already have a native allocation in their
+                // source prefab's batch. Queue them for the synchronous cleanup
+                // path instead of changing PrefabRef while those old indexes live.
+                int originalBatchIndex = EntityManager.HasComponent<Batch>(area)
+                    ? EntityManager.GetComponentData<Batch>(area).m_BatchIndex
+                    : -1;
+                Entity originalOwner = EntityManager.HasComponent<Owner>(area)
+                    ? EntityManager.GetComponentData<Owner>(area).m_Owner
+                    : Entity.Null;
+                Temp originalTemp = EntityManager.GetComponentData<Temp>(area);
+                TemporaryAreaBatchReleaseQueue.Enqueue(new TemporaryAreaBatchReleaseQueue.Request
+                {
+                    Area = area,
+                    SourcePrefab = sourcePrefab,
+                    TargetPrefab = targetPrefab,
+                    InitialOwner = originalOwner,
+                    OriginalTemp = originalTemp,
+                    OriginalBatchIndex = originalBatchIndex,
+                    SourceName = sourceName,
+                    TargetName = targetName,
+                });
                 Mod.Log.InfoFormat(
-                    "Temporary construction surface swapped immediately: area={0}, source='{1}', target='{2}'",
+                    "Temporary surface replacement queued for safe batch release: area={0}, source='{1}', target='{2}', oldBatch={3}",
                     area,
                     sourceName,
-                    targetName);
+                    targetName,
+                    originalBatchIndex);
                 return true;
             }
 
             if (originalSpecialIndustryPrefab != Entity.Null)
             {
+                // Child Lot areas for farm/fish extraction fields still carry
+                // industry-specific data. Keep the original Lot identity in a
+                // per-instance marker while rendering this instance as a surface.
+                // Root-batch extractors do not use this marker route; they receive
+                // a separate overlay so their root Lot prefab remains intact.
                 var marker = new SpecialIndustryLotReplacement
                 {
                     OriginalPrefab = originalSpecialIndustryPrefab,
@@ -1571,6 +1976,94 @@ namespace AutomaticTextureReplacer
             return true;
         }
 
+        /// <summary>
+        /// Finalizes the temporary-preview route after AreaBatchSystem has released
+        /// the source allocation. At this point Batch can be reset safely, the target
+        /// PrefabRef assigned, and the original Temp state restored before the tool
+        /// gets another chance to destroy the preview entity.
+        /// </summary>
+        internal bool CompleteTemporarySurfaceReplacement(
+            Entity area,
+            Entity sourcePrefab,
+            Entity targetPrefab,
+            string sourceName,
+            string targetName,
+            Entity initialOwner,
+            int originalBatchIndex,
+            Temp originalTemp,
+            bool hadTemp)
+        {
+            if (!EntityManager.Exists(area) || !EntityManager.HasComponent<PrefabRef>(area) ||
+                EntityManager.HasComponent<Deleted>(area))
+            {
+                return false;
+            }
+
+            if (EntityManager.HasComponent<Batch>(area))
+            {
+                Batch batch = EntityManager.GetComponentData<Batch>(area);
+                if (batch.m_AllocatedSize != 0)
+                {
+                    Mod.Log.WarnFormat(
+                        "Temporary surface batch release has not completed; keeping original prefab: area={0}, allocated={1}, oldBatch={2}",
+                        area,
+                        batch.m_AllocatedSize,
+                        batch.m_BatchIndex);
+                    if (hadTemp && !EntityManager.HasComponent<Temp>(area))
+                    {
+                        EntityManager.AddComponentData(area, originalTemp);
+                    }
+                    return false;
+                }
+
+                // AreaBatchSystem has now released the allocation and removed
+                // its old per-batch metadata. It is safe to clear the remaining
+                // indexes before the target prefab gets a fresh allocation.
+                EntityManager.SetComponentData(area, default(Batch));
+            }
+
+            PrepareSurfaceReplacement(area, sourcePrefab, targetPrefab, sourceName, targetName);
+            EntityManager.SetComponentData(area, new PrefabRef { m_Prefab = targetPrefab });
+            if (hadTemp && !EntityManager.HasComponent<Temp>(area))
+            {
+                EntityManager.AddComponentData(area, originalTemp);
+            }
+            if (!EntityManager.HasComponent<Updated>(area))
+            {
+                EntityManager.AddComponent<Updated>(area);
+            }
+
+            if (!m_TemporaryPreviewReplacementTraces.TryGetValue(area, out TemporaryPreviewReplacementTrace trace))
+            {
+                m_TemporaryPreviewReplacementTraces.Add(area, new TemporaryPreviewReplacementTrace
+                {
+                    InitialOwner = initialOwner,
+                    OriginalPrefab = sourcePrefab,
+                    TargetPrefab = targetPrefab,
+                    OriginalBatchIndex = originalBatchIndex,
+                    ReplacedAtFrame = UnityEngine.Time.frameCount,
+                });
+            }
+            else
+            {
+                trace.TargetPrefab = targetPrefab;
+            }
+
+            Mod.Log.InfoFormat(
+                "Temporary construction surface replaced after old batch release: area={0}, source='{1}', target='{2}', oldBatch={3}",
+                area,
+                sourceName,
+                targetName,
+                originalBatchIndex);
+            return true;
+        }
+
+        /// <summary>
+        /// Convenience route for callers that know only the target. Resolve the
+        /// source from this area's current PrefabRef, then delegate to the shared
+        /// dispatcher. sourceNameOverride is used when tools wrap source names
+        /// (for example, a Placemaker overlay name containing the base surface).
+        /// </summary>
         private bool ApplySurfacePrefabReplacement(
             Entity area,
             Entity targetPrefab,
@@ -3449,6 +3942,14 @@ namespace AutomaticTextureReplacer
 
         }
 
+        /// <summary>
+        /// Root-batch extractor route for industries whose surface is rendered by
+        /// the root Lot prefab (for example forestry, ore, oil, and stone extractors).
+        /// Keep that root prefab and its ExtractorAreaData; create a child Surface
+        /// area owned by the Lot and copy its Nodes so it follows contour edits and
+        /// is deleted with the industry. Child-Lot extractors such as farms/fish use
+        /// ApplySurfacePrefabReplacement on their existing field area instead.
+        /// </summary>
         private bool TryQueueIndustrySurfaceOverlay(
             Entity industryRoot,
             Entity industryPrefab,

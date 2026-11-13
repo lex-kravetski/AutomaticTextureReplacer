@@ -15,7 +15,7 @@
 .atrMainTab{min-width:110rem;background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
 .atrMainTabSelected{background:#138b6a!important;border-color:#48d6a0!important}
 .atrMainTab[disabled],.atrRuleActions button[disabled]{opacity:.48;cursor:default}
-.atrRulesToolbar .atrButtonOuter{display:inline-flex;flex:0 0 auto;height:40rem;min-height:40rem;box-sizing:border-box;margin:8rem!important}
+.atrRulesToolbar .atrButtonOuter{display:flex;flex:0 0 auto;height:40rem;min-height:40rem;box-sizing:border-box;margin:8rem!important}
 .atrRulesToolbar .atrButtonOuter>.atrGameButton{display:flex!important;align-items:center!important;justify-content:center!important;height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRulesToolbar>.atrButtonOuter.atrAddRuleButton{margin-left:auto!important}
 .atrScopeToolbar{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;justify-content:space-between;gap:12rem;margin:0 6rem 8rem}
@@ -40,12 +40,12 @@
 .atrRuleTileCell{display:flex;min-width:0;flex:1 1 0;align-items:flex-start}
 .atrRuleRow>.atrRuleSurfaceCell{flex:1 1 0}
 .atrRuleRow>.atrRuleActions{flex:0 0 auto;align-items:flex-start!important;margin:0 4rem}
-.atrRuleActions>.atrButtonOuter{display:inline-flex;flex:0 0 auto;align-self:flex-start;height:38rem;min-height:38rem;margin:0!important;box-sizing:border-box}
+.atrRuleActions>.atrButtonOuter{display:flex;flex:0 0 auto;align-self:flex-start;height:38rem;min-height:38rem;margin:0!important;box-sizing:border-box}
 .atrRuleActions>.atrButtonOuter>.atrGameButton{height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRuleSurfaceIcons{display:flex!important;min-width:0;width:100%;flex:0 0 auto;flex-direction:row!important;flex-wrap:wrap!important;align-content:flex-start;align-items:flex-start;justify-content:flex-start;gap:4rem}
 .atrRuleSurfaceIcons>*{display:flex!important;width:38rem!important;height:38rem!important;flex:0 0 38rem!important}
 .atrRuleSurfaceIconFrame{display:flex;width:38rem;height:38rem;flex:0 0 38rem;box-sizing:border-box;align-items:center;justify-content:center;border:1rem solid rgba(190,222,236,.42);border-radius:3rem;background:rgba(13,32,45,.55);overflow:hidden}
-.atrRuleSurfaceIcon{display:block;width:100%;height:100%;box-sizing:border-box;object-fit:contain}
+.atrRuleSurfaceIcon{display:block;width:100%;height:100%;box-sizing:border-box}
 .atrEditButton,.atrReplaceButton,.atrDeleteRuleButton{height:38rem!important;min-height:38rem!important;box-sizing:border-box;align-items:center!important;justify-content:center!important}
 .atrEditButton{padding:0 10rem!important;border-radius:0!important;line-height:1.2}
 .atrDeleteRuleButton{min-width:30rem!important;margin:0!important;padding:0 5rem!important}
@@ -75,7 +75,7 @@
 .atrSurfaceGrid{display:flex;flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:6rem;padding:4rem}
 .atrSurfaceTile{width:76rem;height:76rem;flex:0 0 76rem;box-sizing:border-box;padding:4rem;border:2rem solid transparent;border-radius:3rem;overflow:hidden;background:rgba(255,255,255,.1)}
 .atrSurfaceTileSelected{border:6rem solid #43c86b!important;box-shadow:0 0 0 3rem rgba(67,200,107,.4)}
-.atrSurfaceTile img{display:block;width:100%;height:100%;object-fit:contain}
+.atrSurfaceTile img{display:block;width:100%;height:100%}
 .atrSurfaceTooltip{display:flex;flex-direction:column;gap:3rem;max-width:300rem;white-space:normal}
 .atrSurfaceTooltip strong{color:rgba(255,255,255,.98)}
 .atrSurfaceTooltip span{color:rgba(255,255,255,.7)}
@@ -83,6 +83,6 @@
 .atrPickerFooter{display:flex;flex:0 0 auto;flex-direction:row;justify-content:flex-end;gap:8rem;box-sizing:border-box;margin:6rem -8rem -8rem;padding:14rem 18rem;background:rgba(18,27,34,.98)}
 .atrPickerResizeCorner{position:absolute;bottom:0;z-index:100;width:24rem;height:24rem;pointer-events:auto}
 .atrSurfaceTile{position:relative}
-.atrSurfaceTile>img:first-child{display:block;width:100%;height:100%;object-fit:contain}
-.atrSurfaceTooltip{width:320rem;max-width:min(520rem,70vw)}
-.atrSurfaceTooltipImage{display:block;width:100%;max-height:360rem;object-fit:contain;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem}
+.atrSurfaceTile>img:first-child{display:block;width:100%;height:100%}
+.atrSurfaceTooltip{width:320rem;max-width:520rem}
+.atrSurfaceTooltipImage{display:block;width:100%;max-height:360rem;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem}
