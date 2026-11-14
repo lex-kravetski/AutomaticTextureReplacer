@@ -690,6 +690,8 @@ namespace AutomaticTextureReplacer
                     var catalogEntry = new Dictionary<string, string>
                     {
                         ["id"] = id,
+                        ["entityIndex"] = entity.Index.ToString(),
+                        ["entityVersion"] = entity.Version.ToString(),
                         ["name"] = name,
                         ["thumbnail"] = isTransparentSurface
                             ? "coui://replacementsolutions/images/TransparentSurface.svg"
@@ -703,6 +705,9 @@ namespace AutomaticTextureReplacer
                                 : GetLargeThumbnail(prefab, assetIcon),
                         ["group"] = group,
                         ["menuPath"] = menuPath,
+                        ["menuIcon"] = isTransparentSurface || isCustomSurface
+                            ? null
+                            : assetIcon ?? "Media/Placeholder.svg",
                         ["isMod"] = isMod.ToString(),
                         ["customTexture"] = isCustomSurface.ToString(),
                         ["transparentSurface"] = isTransparentSurface.ToString(),

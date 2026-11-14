@@ -85,6 +85,7 @@ const register = (moduleRegistry) => {
   const GameSlider = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "Slider");
   const GameColorPicker = moduleRegistry.get("game-ui/common/input/color-picker/color-picker/color-picker.tsx", "ColorPicker");
   const useSliderStepTransformer = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "useStepTransformer");
+  const gameItemGridClasses = moduleRegistry.get("game-ui/game/components/item-grid/item-grid.module.scss", "classes") || {};
 
   // Gameface slider versions have used both onChange(value) and
   // onChange(event, value). Normalize both forms before updating bindings.
@@ -136,7 +137,8 @@ const register = (moduleRegistry) => {
   const dialogFontSize$ = bindValue("replacementsolutions", "dialogFontSize", 100);
   const replacementScope$ = bindValue("replacementsolutions", "replacementScope", "assets");
   const activeMainTab$ = bindValue("replacementsolutions", "activeMainTab", "surfaces");
-  const alsoNewBuildings$ = bindValue("replacementsolutions", "alsoNewBuildings", false);
+  const alsoNewSurfaceBuildings$ = bindValue("replacementsolutions", "alsoNewSurfaceBuildings", false);
+  const alsoNewIndustryAreas$ = bindValue("replacementsolutions", "alsoNewIndustryAreas", false);
   const showInGameSurfacesAsTargets$ = bindValue("replacementsolutions", "showInGameSurfacesAsTargets", false);
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("replacementsolutions", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("replacementsolutions", "showModSurfacesAsSources", false);
@@ -169,6 +171,131 @@ const register = (moduleRegistry) => {
   const surfaceScaleEditorX$ = bindValue("replacementsolutions", "surfaceScaleEditorX", -1);
   const surfaceScaleEditorY$ = bindValue("replacementsolutions", "surfaceScaleEditorY", -1);
   const surfaceScaleEditorOrigin$ = bindValue("replacementsolutions", "surfaceScaleEditorOrigin", "picker");
+
+  const GameSurfaceMenuContextMenuBridge = () => {
+    const catalogJson = useValue(surfaceCatalog$);
+    React.useEffect(() => {
+      let catalog;
+      try {
+        catalog = JSON.parse(catalogJson || "[]");
+      } catch (error) {
+        console.error("[ReplacementSolutions] Could not read surface catalog for game-menu context clicks", error);
+        return undefined;
+      }
+
+      const itemClass = (gameItemGridClasses.item || "").split(/\s+/).find(Boolean);
+      const thumbnailClass = (gameItemGridClasses.thumbnail || "").split(/\s+/).find(Boolean);
+      if (!itemClass || !thumbnailClass || !Array.isArray(catalog) || catalog.length === 0) return undefined;
+
+      const normalizeMenuIcon = (value) => {
+        const raw = String(value || "").trim();
+        if (raw.startsWith("data:")) return raw;
+        const normalized = raw.replace(/\\/g, "/").toLowerCase();
+        const mediaIndex = normalized.lastIndexOf("media/");
+        return mediaIndex >= 0 ? normalized.slice(mediaIndex) : normalized;
+      };
+      const byMenuIcon = new Map();
+      const byEntity = new Map();
+      const byPrefabName = new Map();
+      for (const surface of catalog) {
+        byEntity.set(`${surface.entityIndex}:${surface.entityVersion}`, surface);
+        const prefabName = String(surface.id || "").replace(/^SurfacePrefab:/, "");
+        if (prefabName) {
+          const matches = byPrefabName.get(prefabName) || [];
+          matches.push(surface);
+          byPrefabName.set(prefabName, matches);
+        }
+        for (const icon of new Set([surface.menuIcon, surface.thumbnail].filter(Boolean))) {
+          const key = normalizeMenuIcon(icon);
+          const entries = byMenuIcon.get(key) || [];
+          entries.push(surface);
+          byMenuIcon.set(key, entries);
+        }
+      }
+      const getTileLabels = (tile) => {
+        const labels = new Set();
+        const add = (value) => {
+          const label = String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+          if (label) labels.add(label);
+        };
+        add(tile.innerText);
+        for (const element of [tile, ...tile.querySelectorAll("[title], [aria-label], img[alt]")]) {
+          add(element.getAttribute("title"));
+          add(element.getAttribute("aria-label"));
+          add(element.getAttribute("alt"));
+        }
+        return labels;
+      };
+
+      let lastHandledTile = null;
+      let lastHandledTime = 0;
+      const onContextMenu = (event) => {
+        if (event.type === "mousedown" && event.button !== 2) return;
+        const target = event.target instanceof Element ? event.target : null;
+        const tile = target?.closest(`.${itemClass}`);
+        if (!tile) return;
+        if (event.type === "contextmenu" && tile === lastHandledTile && Date.now() - lastHandledTime < 2000) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        // The clicked menu item identifies its prefab even when different items share an icon.
+        const fiberKey = Object.keys(tile).find((key) => key.startsWith("__reactFiber$"));
+        let fiber = fiberKey ? tile[fiberKey] : null;
+        let item = null;
+        while (fiber && !item) {
+          item = fiber.memoizedProps?.item || fiber.pendingProps?.item;
+          fiber = fiber.return;
+        }
+        const entity = item?.entity;
+        const entityIndex = entity?.index ?? entity?.Index;
+        const entityVersion = entity?.version ?? entity?.Version;
+        let exact = entityIndex != null && entityVersion != null
+          ? byEntity.get(`${entityIndex}:${entityVersion}`) : null;
+        if (!exact && typeof item?.name === "string") {
+          const matches = byPrefabName.get(item.name) || [];
+          if (matches.length === 1) exact = matches[0];
+        }
+        if (entityIndex != null && entityVersion != null && !exact) {
+          console.warn("[ReplacementSolutions] Menu item absent from surface catalog", JSON.stringify({ entity, name: item?.name, iconMatches: (byMenuIcon.get(normalizeMenuIcon(tile.querySelector(`img.${thumbnailClass}`)?.getAttribute("src"))) || []).map((surface) => ({ id: surface.id, name: surface.name, group: surface.group })) }));
+        }
+        const image = tile.querySelector(`img.${thumbnailClass}`);
+        const icon = normalizeMenuIcon(image?.getAttribute("src") || image?.currentSrc);
+        let candidates = entityIndex != null && entityVersion != null
+          ? (exact ? [exact] : []) : byMenuIcon.get(icon);
+        if (!candidates || candidates.length === 0) return;
+        if (candidates.length > 1) {
+          const labels = getTileLabels(tile);
+          const namedMatches = candidates.filter((candidate) => {
+            const names = [candidate.name, candidate.menuName].filter(Boolean)
+              .map((name) => String(name).trim().replace(/\s+/g, " ").toLocaleLowerCase());
+            return names.some((name) => labels.has(name) || [...labels].some((label) => label.includes(name)));
+          });
+          if (namedMatches.length !== 1) return;
+          candidates = namedMatches;
+        }
+
+        const surface = candidates[0];
+        lastHandledTile = tile;
+        lastHandledTime = Date.now();
+        event.preventDefault();
+        event.stopPropagation();
+        trigger("replacementsolutions", "openSurfaceScaleEditor",
+          `${surface.id},${Math.round(event.clientX)},${Math.round(event.clientY)},game-menu`);
+      };
+
+      // Capture before the game's menu suppresses the browser context menu. Unmatched
+      // items are left untouched; only a unique surface-icon match is intercepted.
+      document.addEventListener("contextmenu", onContextMenu, true);
+      document.addEventListener("mousedown", onContextMenu, true);
+      return () => {
+        document.removeEventListener("contextmenu", onContextMenu, true);
+        document.removeEventListener("mousedown", onContextMenu, true);
+      };
+    }, [catalogJson]);
+
+    return null;
+  };
   const readSurfaceScales = (json) => {
     try { return JSON.parse(json || "{}"); } catch (_) { return {}; }
   };
@@ -384,7 +511,7 @@ const register = (moduleRegistry) => {
     const thumbnails = React.useMemo(() => {
       try {
         return JSON.parse(catalogJson || "[]")
-          .map((surface) => surface.thumbnail)
+          .flatMap((surface) => [surface.thumbnail, surface.tooltipThumbnail])
           .filter((src) => src && !src.startsWith("thumbnail://"));
       } catch (error) {
         console.error("[ReplacementSolutions] Invalid surface catalog while warming thumbnails", error);
@@ -759,7 +886,7 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrPickerResizeCorner atrResizeLeft", onMouseDown: (event) => beginResize(event, true), title: "Drag this corner to resize" }),
       h("div", { className: "atrPickerResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
 
-    const hideForScaleEditor = scaleEditorOpen && scaleEditorOrigin === "picker";
+    const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "picker" || scaleEditorOrigin === "game-menu");
     return h("div", { className: "atrDialogPositioner atrPickerPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef, "aria-hidden": !open || hideForScaleEditor },
       h(ui.Panel, {
         className: "atrPickerPanel",
@@ -782,7 +909,8 @@ const register = (moduleRegistry) => {
     const showRevertAllButton = useValue(showRevertAllButton$);
     const replacementScope = useValue(replacementScope$);
     const savedActiveTab = useValue(activeMainTab$);
-    const alsoNewBuildings = useValue(alsoNewBuildings$);
+    const alsoNewSurfaceBuildings = useValue(alsoNewSurfaceBuildings$);
+    const alsoNewIndustryAreas = useValue(alsoNewIndustryAreas$);
     const rulesJson = useValue(rulesJson$);
     const areaRulesJson = useValue(areaRulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
@@ -1026,20 +1154,24 @@ const register = (moduleRegistry) => {
         style: BUTTON_STYLE.scope,
       });
     }));
+    const isAreasTab = activeTab === "areas";
+    const alsoNewEnabled = isAreasTab ? alsoNewIndustryAreas : alsoNewSurfaceBuildings;
+    const alsoNewTrigger = isAreasTab ? "setAlsoNewIndustryAreas" : "setAlsoNewSurfaceBuildings";
+    const alsoNewLabel = isAreasTab ? "Also new industry areas" : "Also new buildings";
     const alsoNewBuildingsCheckbox = GameCheckbox
       ? h(GameCheckbox, {
-        checked: alsoNewBuildings,
+        checked: alsoNewEnabled,
         focusKey: FocusDisabled,
         className: "atrAlsoNewBuildingsCheckbox",
-        onChange: (checked) => trigger("replacementsolutions", "setAlsoNewBuildings", checked),
+        onChange: (checked) => trigger("replacementsolutions", alsoNewTrigger, checked),
       })
       : h("input", {
         type: "checkbox",
-        checked: alsoNewBuildings,
-        onChange: (event) => trigger("replacementsolutions", "setAlsoNewBuildings", event.target.checked),
+        checked: alsoNewEnabled,
+        onChange: (event) => trigger("replacementsolutions", alsoNewTrigger, event.target.checked),
       });
     const alsoNewBuildingsControl = h("div", { className: "atrAlsoNewBuildingsControl" },
-      h("span", null, "Also new buildings"),
+      h("span", null, alsoNewLabel),
       alsoNewBuildingsCheckbox);
     const alsoNewBuildingsTooltip = ui.Tooltip
       ? h(ui.Tooltip, {
@@ -1108,7 +1240,7 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
 
     if (ui.Panel) {
-      const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker");
+      const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker" || scaleEditorOrigin === "game-menu");
       return h("div", { className: "atrDialogPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef },
         h(ui.Panel, {
           className: "atrNativePanel",
@@ -1117,7 +1249,7 @@ const register = (moduleRegistry) => {
         }, body), resizeCorners);
     }
 
-    const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker");
+    const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker" || scaleEditorOrigin === "game-menu");
     return h("div", { className: "atrDialogPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef },
       h("section", { className: "atrFallbackPanel" },
         h("header", { className: "atrDialogHeader", onMouseDown: beginDrag },
@@ -1444,6 +1576,7 @@ const register = (moduleRegistry) => {
   moduleRegistry.append("Game", Dialog);
   moduleRegistry.append("Game", SurfacePicker);
   moduleRegistry.append("Game", SurfaceScaleDialog);
+  moduleRegistry.append("Game", GameSurfaceMenuContextMenuBridge);
   moduleRegistry.append("Game", SurfaceThumbnailPreloader);
 };
 

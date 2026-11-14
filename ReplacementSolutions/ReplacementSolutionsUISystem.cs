@@ -34,7 +34,8 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_DialogFontSize;
         private ValueBinding<string> m_ReplacementScope;
         private ValueBinding<string> m_ActiveMainTab;
-        private ValueBinding<bool> m_AlsoNewBuildings;
+        private ValueBinding<bool> m_AlsoNewSurfaceBuildings;
+        private ValueBinding<bool> m_AlsoNewIndustryAreas;
         private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
         private ValueBinding<bool> m_ShowModSurfacesAsSources;
@@ -201,10 +202,14 @@ namespace AutomaticTextureReplacer
                 "replacementsolutions",
                 "activeMainTab",
                 settings?.ActiveMainTab ?? "surfaces"));
-            AddBinding(m_AlsoNewBuildings = new ValueBinding<bool>(
+            AddBinding(m_AlsoNewSurfaceBuildings = new ValueBinding<bool>(
                 "replacementsolutions",
-                "alsoNewBuildings",
-                settings?.AlsoNewBuildings ?? false));
+                "alsoNewSurfaceBuildings",
+                settings?.AlsoNewSurfaceBuildings ?? false));
+            AddBinding(m_AlsoNewIndustryAreas = new ValueBinding<bool>(
+                "replacementsolutions",
+                "alsoNewIndustryAreas",
+                settings?.AlsoNewIndustryAreas ?? false));
             AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
                 "replacementsolutions",
                 "showInGameSurfacesAsTargets",
@@ -331,7 +336,8 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("replacementsolutions", "replaceAreas", ReplaceAreas));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setReplacementScope", SetReplacementScope));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setActiveMainTab", SetActiveMainTab));
-            AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewBuildings", SetAlsoNewBuildings));
+            AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewSurfaceBuildings", SetAlsoNewSurfaceBuildings));
+            AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewIndustryAreas", SetAlsoNewIndustryAreas));
             AddBinding(new TriggerBinding("replacementsolutions", "revertAllSurfaces", RevertAllSurfaces));
             AddBinding(new TriggerBinding("replacementsolutions", "revertAllAreas", () => SurfaceReplacementSystem.QueueAreaRevertAll()));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfacePickerPosition", SetSurfacePickerPosition));
@@ -653,16 +659,28 @@ namespace AutomaticTextureReplacer
             m_ActiveMainTab.Update(value);
         }
 
-        private void SetAlsoNewBuildings(bool value)
+        private void SetAlsoNewSurfaceBuildings(bool value)
         {
             if (Mod.Settings == null)
             {
                 return;
             }
 
-            Mod.Settings.AlsoNewBuildings = value;
+            Mod.Settings.AlsoNewSurfaceBuildings = value;
             Mod.Settings.ApplyAndSave();
-            m_AlsoNewBuildings.Update(value);
+            m_AlsoNewSurfaceBuildings.Update(value);
+        }
+
+        private void SetAlsoNewIndustryAreas(bool value)
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            Mod.Settings.AlsoNewIndustryAreas = value;
+            Mod.Settings.ApplyAndSave();
+            m_AlsoNewIndustryAreas.Update(value);
         }
 
         private void RevertAllSurfaces()

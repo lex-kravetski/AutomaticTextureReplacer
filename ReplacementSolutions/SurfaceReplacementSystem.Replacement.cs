@@ -43,6 +43,7 @@ namespace AutomaticTextureReplacer
             ResetConstructionBatchRefreshes();
             m_PendingConstructionBatchRefreshes.Clear();
             m_ReplacementMaterialSources.Clear();
+            m_MissingDecalMaterialSinceFrame.Clear();
             m_AppliedReplacementMaterials.Clear();
             m_AppliedReplacementMaterialSources.Clear();
             Mod.Log.Info("Pending automatic construction surface replacements cancelled for Revert All");
@@ -555,9 +556,19 @@ namespace AutomaticTextureReplacer
             if (!m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out UnityEngine.Material material, out _, out _, out _) ||
                 material == null)
             {
-                LogDecalMaskIssue(sourcePrefab, targetPrefab, "target area batch material unavailable; will retry");
+                // A newly registered area batch can take several frames to acquire its material.
+                // Keep retrying, but report only a prolonged failure rather than normal initialization.
+                if (!m_MissingDecalMaterialSinceFrame.TryGetValue(targetPrefab, out int firstMissingFrame))
+                {
+                    m_MissingDecalMaterialSinceFrame[targetPrefab] = UnityEngine.Time.frameCount;
+                }
+                else if (UnityEngine.Time.frameCount - firstMissingFrame >= 600)
+                {
+                    LogDecalMaskIssue(sourcePrefab, targetPrefab, "target area batch material still unavailable after 600 frames; retrying");
+                }
                 return;
             }
+            m_MissingDecalMaterialSinceFrame.Remove(targetPrefab);
 
             // A material is normally rebuilt only when its batch changes. Do not
             // rewrite it (and do not log) on every simulation frame.

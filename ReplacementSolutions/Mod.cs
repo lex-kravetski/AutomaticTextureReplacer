@@ -34,6 +34,15 @@ namespace AutomaticTextureReplacer
                 "ReplacementSolutions",
                 Settings,
                 new ReplacementSolutionsSettings(this));
+            if (Settings.AlsoNewBuildings)
+            {
+                // Older saves had one switch for both tabs. Preserve that choice
+                // once, then let the two new switches evolve independently.
+                Settings.AlsoNewSurfaceBuildings = true;
+                Settings.AlsoNewIndustryAreas = true;
+                Settings.AlsoNewBuildings = false;
+                Settings.ApplyAndSave();
+            }
             if (migratedSettings)
             {
                 Settings.RulesJson = "[]";

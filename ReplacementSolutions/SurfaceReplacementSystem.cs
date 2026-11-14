@@ -156,6 +156,7 @@ namespace AutomaticTextureReplacer
         private readonly Dictionary<Entity, UnityEngine.Material> m_AppliedReplacementMaterials = new Dictionary<Entity, UnityEngine.Material>();
         private readonly Dictionary<Entity, Entity> m_AppliedReplacementMaterialSources = new Dictionary<Entity, Entity>();
         private readonly HashSet<string> m_LoggedDecalMaskIssues = new HashSet<string>();
+        private readonly Dictionary<Entity, int> m_MissingDecalMaterialSinceFrame = new Dictionary<Entity, int>();
         private readonly HashSet<Entity> m_IndustryAreasScheduledThisFrame = new HashSet<Entity>();
         private readonly HashSet<Entity> m_IndustryAreasRevertedThisFrame = new HashSet<Entity>();
         private readonly HashSet<Entity> m_LoggedDeferredIndustryRoots = new HashSet<Entity>();

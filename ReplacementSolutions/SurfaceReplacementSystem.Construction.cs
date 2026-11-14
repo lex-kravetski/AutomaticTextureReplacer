@@ -48,7 +48,7 @@ namespace AutomaticTextureReplacer
 
             // A creation definition can be observed after the user has disabled a
             // rule. Revalidate queued work against the current settings at consume time.
-            if (m_PendingConstructionBatchRefreshes.Count > 0 && !Mod.Settings.AlsoNewBuildings)
+            if (m_PendingConstructionBatchRefreshes.Count > 0 && Mod.Settings == null)
             {
                 m_PendingConstructionBatchRefreshes.Clear();
             }
@@ -57,6 +57,11 @@ namespace AutomaticTextureReplacer
                 HashSet<string> enabledMappings = GetEnabledConstructionMappings();
                 m_PendingConstructionBatchRefreshes.RemoveAll(request =>
                 {
+                    if (request.MatchIndustryType ? !Mod.Settings.AlsoNewIndustryAreas : !Mod.Settings.AlsoNewSurfaceBuildings)
+                    {
+                        return true;
+                    }
+
                     Entity mappingSource = !request.MatchIndustryType && request.RuleSourcePrefab != Entity.Null
                         ? request.RuleSourcePrefab
                         : request.SourcePrefab;

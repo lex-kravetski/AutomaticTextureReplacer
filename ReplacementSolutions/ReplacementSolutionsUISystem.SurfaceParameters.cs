@@ -214,7 +214,8 @@ namespace AutomaticTextureReplacer
             int xComma = yComma > 0 ? request.LastIndexOf(',', yComma - 1) : -1;
             if (xComma > 0)
             {
-                origin = request.Substring(lastComma + 1) == "main" ? "main" : "picker";
+                string requestedOrigin = request.Substring(lastComma + 1);
+                origin = requestedOrigin == "main" || requestedOrigin == "game-menu" ? requestedOrigin : "picker";
                 surfaceId = request.Substring(0, xComma);
             }
 

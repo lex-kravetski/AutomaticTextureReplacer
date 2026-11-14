@@ -253,7 +253,7 @@ namespace AutomaticTextureReplacer
         {
             m_ProcessedCreatedSurfaceAreas.RemoveWhere(area =>
                 !EntityManager.Exists(area) || !EntityManager.HasComponent<Created>(area));
-            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings || m_NewBuildingSurfaceQuery.IsEmptyIgnoreFilter)
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewSurfaceBuildings || m_NewBuildingSurfaceQuery.IsEmptyIgnoreFilter)
                 return;
             NewBuildingSurfaceReplacementSystem rules = World.GetExistingSystemManaged<NewBuildingSurfaceReplacementSystem>();
             if (rules == null) return;
@@ -296,7 +296,7 @@ namespace AutomaticTextureReplacer
 
         private void ProcessTemporarySurfacePreviews()
         {
-            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings || m_TempConstructionSurfaceQuery.IsEmptyIgnoreFilter)
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewSurfaceBuildings || m_TempConstructionSurfaceQuery.IsEmptyIgnoreFilter)
             {
                 return;
             }

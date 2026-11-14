@@ -44,6 +44,13 @@ namespace AutomaticTextureReplacer
         public string ActiveMainTab { get; set; } = "surfaces";
 
         [SettingsUIHidden]
+        public bool AlsoNewSurfaceBuildings { get; set; }
+
+        [SettingsUIHidden]
+        public bool AlsoNewIndustryAreas { get; set; }
+
+        // Kept to migrate saves written before the automatic setting was split by tab.
+        [SettingsUIHidden]
         public bool AlsoNewBuildings { get; set; }
 
         // -1 means that the dialog has not been positioned by the player yet.
@@ -143,6 +150,8 @@ namespace AutomaticTextureReplacer
             ShowSurfaceBaseColorSettings = false;
             ReplacementScope = "assets";
             ActiveMainTab = "surfaces";
+            AlsoNewSurfaceBuildings = false;
+            AlsoNewIndustryAreas = false;
             AlsoNewBuildings = false;
         }
     }

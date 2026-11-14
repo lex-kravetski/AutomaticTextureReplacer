@@ -40,7 +40,7 @@ namespace AutomaticTextureReplacer
         public bool TryChooseSurfaceReplacement(Entity source, out Entity target)
         {
             target = Entity.Null;
-            if (Mod.Settings == null || !Mod.Settings.AlsoNewBuildings ||
+            if (Mod.Settings == null || !Mod.Settings.AlsoNewSurfaceBuildings ||
                 !string.Equals(Mod.Settings.RulesJson ?? "[]", m_CachedRulesJson, StringComparison.Ordinal) ||
                 !m_TargetsBySource.TryGetValue(source, out List<Entity> targets) || targets.Count == 0)
             {
@@ -118,13 +118,14 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            if (!Mod.Settings.AlsoNewBuildings)
+            if (!Mod.Settings.AlsoNewSurfaceBuildings && !Mod.Settings.AlsoNewIndustryAreas)
             {
                 if (m_CachedRulesJson != null)
                 {
                     m_CachedRulesJson = null;
                     m_CachedAreaRulesJson = null;
                     m_TargetsBySource.Clear();
+                    m_RuleSourceByWrappedSurface.Clear();
                     m_TargetsByIndustryType.Clear();
                     m_QueuedIndustryOwnerDefinitions.Clear();
                     m_HasLastSpecialIndustryOwnerDefinition = false;
@@ -133,6 +134,13 @@ namespace AutomaticTextureReplacer
                     SurfaceReplacementSystem.ResetConstructionBatchRefreshes();
                 }
                 return;
+            }
+
+            if (!Mod.Settings.AlsoNewIndustryAreas)
+            {
+                m_QueuedIndustryOwnerDefinitions.Clear();
+                m_HasLastSpecialIndustryOwnerDefinition = false;
+                m_LastSpecialIndustryPrefab = Entity.Null;
             }
 
             string rulesJson = Mod.Settings.RulesJson ?? "[]";
@@ -154,7 +162,8 @@ namespace AutomaticTextureReplacer
 
             PrefabBase activePrefab = m_ToolSystem.activePrefab;
             Entity activePrefabEntity = activePrefab != null ? m_PrefabSystem.GetEntity(activePrefab) : Entity.Null;
-            if (activePrefabEntity != Entity.Null && m_TargetsByIndustryType.ContainsKey(activePrefabEntity))
+            if (Mod.Settings.AlsoNewIndustryAreas && activePrefabEntity != Entity.Null &&
+                m_TargetsByIndustryType.ContainsKey(activePrefabEntity))
             {
                 if (m_LastSpecialIndustryPrefab != activePrefabEntity)
                 {
@@ -203,7 +212,7 @@ namespace AutomaticTextureReplacer
                             mapFeature);
                     }
 
-                    if (isExtractorAreaPrefab)
+                    if (Mod.Settings.AlsoNewIndustryAreas && isExtractorAreaPrefab)
                     {
                         Entity constructionBuilding = FindOwningBuilding(definition.m_Owner);
                         Entity constructionBuildingPrefab = constructionBuilding != Entity.Null &&
@@ -347,6 +356,7 @@ namespace AutomaticTextureReplacer
                         (isManualSurfaceCreation && replacementScope == "hand-drawn-surfaces");
                     if (definition.m_Original != Entity.Null ||
                         definition.m_Prefab == Entity.Null ||
+                        !Mod.Settings.AlsoNewSurfaceBuildings ||
                         !isSurfacePrefab ||
                         isIndustryExtractionDefinition ||
                         !scopeAllowsConstruction ||
