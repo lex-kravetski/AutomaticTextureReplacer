@@ -82,6 +82,8 @@ const register = (moduleRegistry) => {
     });
   };
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
+  const GameSlider = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "Slider");
+  const useSliderStepTransformer = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "useStepTransformer");
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("replacementsolutions", "surfaceCatalog", "[]");
   const areaCatalog$ = bindValue("replacementsolutions", "areaCatalog", "[]");
@@ -102,16 +104,31 @@ const register = (moduleRegistry) => {
   const showRevertAllButton$ = bindValue("replacementsolutions", "showRevertAllButton", false);
   const rulesJson$ = bindValue("replacementsolutions", "rulesJson", "[]");
   const areaRulesJson$ = bindValue("replacementsolutions", "areaRulesJson", "[]");
+  const surfaceScalesJson$ = bindValue("replacementsolutions", "surfaceScalesJson", "{}");
+  const surfaceScaleEditorOpen$ = bindValue("replacementsolutions", "surfaceScaleEditorOpen", false);
+  const surfaceScaleSurfaceId$ = bindValue("replacementsolutions", "surfaceScaleSurfaceId", "");
+  const surfaceScaleSurfaceName$ = bindValue("replacementsolutions", "surfaceScaleSurfaceName", "");
+  const surfaceScaleTenths$ = bindValue("replacementsolutions", "surfaceScaleTenths", 10);
+  const surfaceScaleEditorX$ = bindValue("replacementsolutions", "surfaceScaleEditorX", -1);
+  const surfaceScaleEditorY$ = bindValue("replacementsolutions", "surfaceScaleEditorY", -1);
+  const surfaceScaleEditorOrigin$ = bindValue("replacementsolutions", "surfaceScaleEditorOrigin", "picker");
+  const readSurfaceScales = (json) => {
+    try { return JSON.parse(json || "{}"); } catch (_) { return {}; }
+  };
+  const scaleBadge = (scale) => scale && Math.abs(Number(scale) - 1) > 0.001
+    ? h("span", { className: "atrScaleBadge" }, `Scale: ${Number(scale).toFixed(1)}`)
+    : null;
+  const makeSurfaceTooltipContent = (surface, includeGroup) => h(React.Fragment, null,
+    h("strong", null, surface.name),
+    includeGroup ? h("span", null, surface.group || "In-game") : null,
+    h("span", { className: "atrSurfaceTooltipPath" }, surface.menuPath || "In-game asset"),
+    h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
   const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
-  },
-  h("strong", null, surface.name),
-  includeGroup ? h("span", null, surface.group || "In-game") : null,
-  h("span", null, surface.menuPath || "In-game asset"),
-  h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
+  }, makeSurfaceTooltipContent(surface, includeGroup));
 
-  const RuleRow = React.memo(({ rule, ruleKind, deleteRule, setRuleEnabled, openSurfacePicker, surfaceCatalogById, areaCatalogById, scaledFontSize, rowIndex }) => {
+  const RuleRow = React.memo(({ rule, ruleKind, deleteRule, setRuleEnabled, openSurfacePicker, surfaceCatalogById, areaCatalogById, surfaceScales, scaledFontSize, rowIndex }) => {
     const lastPickerOpenAt = React.useRef(0);
     const openPickerOnce = (side) => {
       const now = Date.now();
@@ -128,12 +145,22 @@ const register = (moduleRegistry) => {
       const catalogById = sourceIsArea ? areaCatalogById : surfaceCatalogById;
       const ids = rule[idsKey] || [];
       const icons = ids.map((id) => catalogById.get(id)).filter(Boolean).map((surface) => {
+        const openScaleEditor = (event) => {
+          if (sourceIsArea || event.button !== 2) return;
+          event.preventDefault();
+          event.stopPropagation();
+          trigger("replacementsolutions", "openSurfaceScaleEditor", `${surface.id},${Math.round(event.clientX)},${Math.round(event.clientY)},main`);
+        };
         const icon = h("img", {
           className: "atrRuleSurfaceIcon",
           src: surface.thumbnail,
           alt: surface.name,
         });
-        const framedIcon = h("div", { className: "atrRuleSurfaceIconFrame" }, icon);
+        const framedIcon = h("div", {
+          className: "atrRuleSurfaceIconFrame",
+          onMouseDown: openScaleEditor,
+          onContextMenu: (event) => event.preventDefault(),
+        }, icon, !sourceIsArea ? scaleBadge(surfaceScales[surface.id]) : null);
         return ui.Tooltip
           ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize), delayTime: 0, hideOnInteraction: false }, framedIcon)
           : h("span", { key: surface.id, title: `${surface.name} — ${surface.group || "In-game"}` }, framedIcon);
@@ -182,13 +209,17 @@ const register = (moduleRegistry) => {
   const dialogY$ = bindValue("replacementsolutions", "dialogY", -1);
   const dialogWidth$ = bindValue("replacementsolutions", "dialogWidth", -1);
   const dialogHeight$ = bindValue("replacementsolutions", "dialogHeight", -1);
+  const toolbarPickerOpen$ = bindValue("replacementsolutions", "surfacePickerOpen", false);
+  const toolbarScaleEditorOpen$ = bindValue("replacementsolutions", "surfaceScaleEditorOpen", false);
   const ToolbarButton = () => {
     const open = useValue(dialogOpen$);
+    const pickerOpen = useValue(toolbarPickerOpen$);
+    const scaleEditorOpen = useValue(toolbarScaleEditorOpen$);
     const toggle = () => trigger("replacementsolutions", "toggleDialog");
     const props = {
       variant: "floating",
       src: "coui://replacementsolutions/images/ReplacementSolutions_Icon.svg",
-      selected: open,
+      selected: open || pickerOpen || scaleEditorOpen,
       tooltipLabel: "Replacement Solutions",
       onSelect: toggle,
     };
@@ -216,6 +247,9 @@ const register = (moduleRegistry) => {
 
   const SurfacePicker = () => {
     const open = useValue(surfacePickerOpen$);
+    const scaleEditorOpen = useValue(surfaceScaleEditorOpen$);
+    const scaleEditorOrigin = useValue(surfaceScaleEditorOrigin$);
+    const surfaceScales = readSurfaceScales(useValue(surfaceScalesJson$));
     const collapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
     const savedX = useValue(surfacePickerX$);
     const savedY = useValue(surfacePickerY$);
@@ -443,7 +477,22 @@ const register = (moduleRegistry) => {
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
       const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize);
-      const tileContents = h("img", { src: surface.thumbnail, alt: surface.name });
+      const tileContents = h(React.Fragment, null,
+        h("img", { src: surface.thumbnail, alt: surface.name }),
+        scaleBadge(surfaceScales[surface.id]));
+      const handleScale = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        trigger("replacementsolutions", "openSurfaceScaleEditor", `${surface.id},${Math.round(event.clientX)},${Math.round(event.clientY)},picker`);
+      };
+      const handleTileMouseDown = (event) => {
+        if (event.button === 2) {
+          handleScale(event);
+          return;
+        }
+        if (event.button === 0) pendingShiftClick.current = event.shiftKey;
+      };
+      const suppressBrowserContextMenu = (event) => event.preventDefault();
       const handleSelect = () => selectSurface(group, index, surface, pendingShiftClick.current);
       const tileClassName = "atrSurfaceTile" + (selected ? " atrSurfaceTileSelected" : "");
       const tile = ui.Button
@@ -451,13 +500,15 @@ const register = (moduleRegistry) => {
           variant: "flat",
           className: tileClassName,
           focusKey: FocusDisabled,
-          onMouseDown: (event) => { pendingShiftClick.current = event.shiftKey; },
+          onMouseDown: handleTileMouseDown,
+          onContextMenu: suppressBrowserContextMenu,
           onSelect: handleSelect,
           "aria-label": surface.name,
         }, tileContents)
         : h("button", {
           className: tileClassName,
-          onMouseDown: (event) => { pendingShiftClick.current = event.shiftKey; },
+          onMouseDown: handleTileMouseDown,
+          onContextMenu: suppressBrowserContextMenu,
           onClick: handleSelect,
           title: surface.name,
         },
@@ -523,7 +574,8 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrPickerResizeCorner atrResizeLeft", onMouseDown: (event) => beginResize(event, true), title: "Drag this corner to resize" }),
       h("div", { className: "atrPickerResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
 
-    return h("div", { className: "atrDialogPositioner atrPickerPositioner", style: { ...style, display: open ? "block" : "none" }, ref: dialogRef, "aria-hidden": !open },
+    const hideForScaleEditor = scaleEditorOpen && scaleEditorOrigin === "picker";
+    return h("div", { className: "atrDialogPositioner atrPickerPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef, "aria-hidden": !open || hideForScaleEditor },
       h(ui.Panel, {
         className: "atrPickerPanel",
         contentClassName: "atrPickerPanelContent",
@@ -535,6 +587,8 @@ const register = (moduleRegistry) => {
 
   const Dialog = () => {
     const open = useValue(dialogOpen$);
+    const scaleEditorOpen = useValue(surfaceScaleEditorOpen$);
+    const scaleEditorOrigin = useValue(surfaceScaleEditorOrigin$);
     const savedX = useValue(dialogX$);
     const savedY = useValue(dialogY$);
     const savedWidth = useValue(dialogWidth$);
@@ -548,6 +602,7 @@ const register = (moduleRegistry) => {
     const areaRulesJson = useValue(areaRulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
     const areaCatalogJson = useValue(areaCatalog$);
+    const surfaceScales = readSurfaceScales(useValue(surfaceScalesJson$));
     const dialogRef = React.useRef(null);
     const rulesScrollRef = React.useRef(null);
     const nextRuleId = React.useRef(1);
@@ -747,6 +802,7 @@ const register = (moduleRegistry) => {
       openSurfacePicker,
       surfaceCatalogById: catalogById,
       areaCatalogById,
+      surfaceScales,
       scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
     }));
 
@@ -860,7 +916,8 @@ const register = (moduleRegistry) => {
       h("div", { className: "atrResizeCorner atrResizeRight", onMouseDown: (event) => beginResize(event), title: "Drag this corner to resize" }));
 
     if (ui.Panel) {
-      return h("div", { className: "atrDialogPositioner", style, ref: dialogRef },
+      const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker");
+      return h("div", { className: "atrDialogPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef },
         h(ui.Panel, {
           className: "atrNativePanel",
         header: h("div", { className: "atrDialogHeader", onMouseDownCapture: beginDrag }, "Replacement Solutions"),
@@ -868,7 +925,8 @@ const register = (moduleRegistry) => {
         }, body), resizeCorners);
     }
 
-    return h("div", { className: "atrDialogPositioner", style, ref: dialogRef },
+    const hideForScaleEditor = scaleEditorOpen && (scaleEditorOrigin === "main" || scaleEditorOrigin === "picker");
+    return h("div", { className: "atrDialogPositioner", style: { ...style, display: open && !hideForScaleEditor ? "block" : "none" }, ref: dialogRef },
       h("section", { className: "atrFallbackPanel" },
         h("header", { className: "atrDialogHeader", onMouseDown: beginDrag },
           h("span", null, "Replacement Solutions"),
@@ -876,9 +934,110 @@ const register = (moduleRegistry) => {
       body), resizeCorners);
   };
 
+  const SurfaceScaleDialog = () => {
+    const open = useValue(surfaceScaleEditorOpen$);
+    const surfaceId = useValue(surfaceScaleSurfaceId$);
+    const surfaceName = useValue(surfaceScaleSurfaceName$);
+    const tenths = useValue(surfaceScaleTenths$);
+    const cursorX = useValue(surfaceScaleEditorX$);
+    const cursorY = useValue(surfaceScaleEditorY$);
+    const catalogJson = useValue(surfaceCatalog$);
+    const fontSize = useValue(dialogFontSize$);
+    const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
+    const stepTransformer = useSliderStepTransformer ? useSliderStepTransformer(0.1) : undefined;
+    const [dragPosition, setDragPosition] = React.useState(null);
+    const catalog = React.useMemo(() => {
+      try { return JSON.parse(catalogJson || "[]"); } catch (_) { return []; }
+    }, [catalogJson]);
+    const surface = catalog.find((entry) => entry.id === surfaceId) || {
+      id: surfaceId,
+      name: surfaceName,
+      group: "In-game",
+      menuPath: "In-game asset",
+      thumbnail: "",
+    };
+    const close = () => trigger("replacementsolutions", "cancelSurfaceScale");
+    const onChange = (value) => trigger("replacementsolutions", "setSurfaceScalePreview", String(Math.round(value * 10)));
+    const value = (Math.max(1, Math.min(200, Number(tenths) || 10)) / 10).toFixed(1);
+    const panelWidth = Math.min(900, window.innerWidth - 32);
+    const panelHeight = Math.min(720, window.innerHeight - 32);
+    const left = cursorX < 0
+      ? Math.round((window.innerWidth - panelWidth) / 2)
+      : cursorX + 14 + panelWidth <= window.innerWidth - 8 ? cursorX + 14 : Math.max(8, cursorX - panelWidth - 14);
+    const top = cursorY < 0
+      ? Math.round((window.innerHeight - panelHeight) / 2)
+      : cursorY + 14 + panelHeight <= window.innerHeight - 8 ? cursorY + 14 : Math.max(8, cursorY - panelHeight - 14);
+    React.useEffect(() => {
+      if (open) setDragPosition({ x: left, y: top });
+    }, [open, cursorX, cursorY]);
+    const position = dragPosition || { x: left, y: top };
+    const beginDrag = (event) => {
+      if (event.button !== 0) return;
+      const positioner = event.currentTarget.closest(".atrScaleDialogPositioner");
+      if (!positioner) return;
+      const rect = positioner.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const move = (e) => setDragPosition({
+        x: Math.max(0, Math.min(window.innerWidth - panelWidth, rect.left + e.clientX - startX)),
+        y: Math.max(0, Math.min(window.innerHeight - panelHeight, rect.top + e.clientY - startY)),
+      });
+      const end = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", end);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", end);
+    };
+    const positionerStyle = {
+      left: position.x + "px",
+      top: position.y + "px",
+      width: panelWidth + "px",
+      height: panelHeight + "px",
+      display: open ? "block" : "none",
+    };
+    const slider = GameSlider
+      ? h(GameSlider, {
+        focusKey: FocusDisabled,
+        value: Number(tenths) / 10,
+        start: 0.1,
+        end: 20,
+        valueTransformer: stepTransformer,
+        onChange,
+        onDoubleClick: () => onChange(1),
+        className: "atrScaleGameSlider",
+      })
+      : h("input", { className: "atrScaleSlider", type: "range", min: 1, max: 200, step: 1, value: Number(tenths) || 10, onChange: (event) => onChange(Number(event.target.value) / 10), onDoubleClick: () => onChange(1) });
+    const content = h("div", { className: "atrScaleDialogBody", style: { fontSize: scaledFontSize } },
+      h("div", { className: "atrScaleSurfaceDetails" }, h("div", { className: "atrSurfaceTooltip" }, makeSurfaceTooltipContent(surface, true))),
+      h("div", { className: "atrScaleControlRow" }, slider, h("strong", { className: "atrScaleCurrentValue" }, `Scale: ${value}`)),
+      h("div", { className: "atrScaleDialogFooter" },
+        createTintedPrimaryButton("OK", () => trigger("replacementsolutions", "applySurfaceScale"), {
+          fontSize: scaledFontSize,
+          tone: "green",
+        }),
+        createTintedPrimaryButton("Cancel", close, {
+          fontSize: scaledFontSize,
+          tone: "blue",
+        })));
+    const header = h("div", { className: "atrDialogHeader atrScaleDialogHeader", onMouseDownCapture: beginDrag }, "Scale");
+    return h("div", { className: "atrDialogPositioner atrScaleDialogPositioner", style: positionerStyle, "aria-hidden": !open },
+      ui.Panel
+        ? h(ui.Panel, {
+          className: "atrScaleDialogPanel",
+          contentClassName: "atrScaleDialogPanelContent",
+          header,
+          onClose: close,
+        }, content)
+        : h("section", { className: "atrFallbackPanel atrScaleDialogPanel" },
+          header,
+          content));
+  };
+
   moduleRegistry.append("GameTopLeft", ToolbarButton);
   moduleRegistry.append("Game", Dialog);
   moduleRegistry.append("Game", SurfacePicker);
+  moduleRegistry.append("Game", SurfaceScaleDialog);
   moduleRegistry.append("Game", SurfaceThumbnailPreloader);
 };
 

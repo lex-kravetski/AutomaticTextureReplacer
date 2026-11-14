@@ -83,6 +83,9 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public string AreaRulesJson { get; set; } = "[]";
 
+        [SettingsUIHidden]
+        public string SurfaceScalesJson { get; set; } = "{}";
+
         public override void SetDefaults()
         {
             DialogOpen = false;
@@ -99,6 +102,7 @@ namespace AutomaticTextureReplacer
             SurfacePickerCollapsedGroupsJson = "{}";
             RulesJson = "[]";
             AreaRulesJson = "[]";
+            SurfaceScalesJson = "{}";
             DialogFontSize = 100;
             ShowInGameSurfacesAsTargets = false;
             ShowSpecialIndustrySurfacesAsTargets = false;

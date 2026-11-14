@@ -19,6 +19,7 @@ using Game.Tools;
 using Game.UI;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace AutomaticTextureReplacer
@@ -49,7 +50,16 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_AreaCatalog;
         private ValueBinding<string> m_RulesJson;
         private ValueBinding<string> m_AreaRulesJson;
+        private ValueBinding<string> m_SurfaceScalesJson;
+        private ValueBinding<bool> m_SurfaceScaleEditorOpen;
+        private ValueBinding<string> m_SurfaceScaleSurfaceId;
+        private ValueBinding<string> m_SurfaceScaleSurfaceName;
+        private ValueBinding<int> m_SurfaceScaleTenths;
+        private ValueBinding<int> m_SurfaceScaleEditorX;
+        private ValueBinding<int> m_SurfaceScaleEditorY;
+        private ValueBinding<string> m_SurfaceScaleEditorOrigin;
         private EntityQuery m_SurfaceQuery;
+        private EntityQuery m_SurfaceScaleInstancesQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
         private bool? m_LastShowSpecialIndustrySurfacesAsTargets;
@@ -69,6 +79,17 @@ namespace AutomaticTextureReplacer
         private List<CustomTextureFile> m_CustomTextureFiles;
         private int m_CustomTextureFileIndex;
         private readonly Dictionary<string, CustomSurfaceInfo> m_CustomSurfacesById = new Dictionary<string, CustomSurfaceInfo>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceScaleValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceScaleBaseValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly HashSet<string> m_SurfaceScaleMaterialCloneIds = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> m_SurfaceScaleMaterialUnavailableLogged = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> m_RestoredSurfaceScaleIds = new HashSet<string>(StringComparer.Ordinal);
+        private string m_ActiveSurfaceScaleId;
+        private float m_ActiveSurfaceScaleBefore;
+        private float m_ActiveSurfaceScaleSavedValue;
+        private bool m_ActiveSurfaceScaleHadSavedValue;
+        private bool m_SurfaceScaleEditorIsOpen;
+        private bool m_RestorePickerOnNextToolbarOpen;
         private readonly Dictionary<int, SurfacePreview> m_SurfacePreviewCache = new Dictionary<int, SurfacePreview>();
         private readonly Dictionary<string, SurfacePreview> m_SurfaceAssetPreviewCache = new Dictionary<string, SurfacePreview>(StringComparer.Ordinal);
         private int m_CustomTextureRegisteredCount;
@@ -110,6 +131,20 @@ namespace AutomaticTextureReplacer
         private List<Dictionary<string, string>> m_SurfaceCatalogEntries;
         private readonly List<SurfacePreviewRequest> m_SurfacePreviewQueue = new List<SurfacePreviewRequest>();
         private int m_SurfacePreviewQueueIndex;
+        private static readonly FieldInfo s_AreaBatchUvScaleField = typeof(AreaBatchSystem).GetField(
+            "m_UVScale",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly int s_BaseColorProperty = Shader.PropertyToID("_BaseColor");
+        private static readonly int s_MetallicProperty = Shader.PropertyToID("_Metallic");
+        private static readonly int s_SmoothnessProperty = Shader.PropertyToID("_Smoothness");
+        private static readonly int s_NormalOpacityProperty = Shader.PropertyToID("_NormalOpacity");
+        private static readonly int s_MetallicOpacityProperty = Shader.PropertyToID("_MetallicOpacity");
+        private static readonly int s_NormalAlphaSourceProperty = Shader.PropertyToID("_NormalAlphaSource");
+        private static readonly int s_MetallicAlphaSourceProperty = Shader.PropertyToID("_MetallicAlphaSource");
+        private static readonly int s_EdgeNormalProperty = Shader.PropertyToID("colossal_EdgeNormal");
+        private static readonly int s_EdgeFadeRangeProperty = Shader.PropertyToID("colossal_EdgeFadeRange");
+        private static readonly int s_EdgeNormalRangeProperty = Shader.PropertyToID("colossal_EdgeNormalRange");
+        private static readonly int s_EdgeNoiseProperty = Shader.PropertyToID("colossal_EdgeNoise");
         private bool m_SurfaceCatalogPublished;
 
         protected override void OnCreate()
@@ -165,6 +200,16 @@ namespace AutomaticTextureReplacer
             AddBinding(m_AreaCatalog = new ValueBinding<string>("replacementsolutions", "areaCatalog", "[]"));
             AddBinding(m_RulesJson = new ValueBinding<string>("replacementsolutions", "rulesJson", settings?.RulesJson ?? "[]"));
             AddBinding(m_AreaRulesJson = new ValueBinding<string>("replacementsolutions", "areaRulesJson", settings?.AreaRulesJson ?? "[]"));
+            LoadSurfaceScaleValues(settings?.SurfaceScalesJson);
+            AddBinding(m_SurfaceScalesJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceScalesJson", SerializeSurfaceScaleValues()));
+            AddBinding(m_SurfaceScaleEditorOpen = new ValueBinding<bool>("replacementsolutions", "surfaceScaleEditorOpen", false));
+            AddBinding(m_SurfaceScaleSurfaceId = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceId", ""));
+            AddBinding(m_SurfaceScaleSurfaceName = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceName", ""));
+            AddBinding(m_SurfaceScaleTenths = new ValueBinding<int>("replacementsolutions", "surfaceScaleTenths", 10));
+            AddBinding(m_SurfaceScaleEditorX = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorX", -1));
+            AddBinding(m_SurfaceScaleEditorY = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorY", -1));
+            AddBinding(m_SurfaceScaleEditorOrigin = new ValueBinding<string>("replacementsolutions", "surfaceScaleEditorOrigin", "picker"));
 
             m_SurfaceQuery = GetEntityQuery(
                 new EntityQueryDesc
@@ -183,13 +228,30 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
+            m_SurfaceScaleInstancesQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<PrefabRef>(),
+                    ComponentType.ReadWrite<Batch>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
+            });
             AddBinding(new TriggerBinding("replacementsolutions", "toggleDialog", () =>
-                SetDialogOpen(Mod.Settings != null && !Mod.Settings.DialogOpen)));
+                ToggleModDialogs()));
             AddBinding(new TriggerBinding("replacementsolutions", "closeDialog", () => SetDialogOpen(false)));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setDialogPosition", SetDialogPosition));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setDialogSize", SetDialogSize));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "openSurfacePicker", OpenSurfacePicker));
             AddBinding(new TriggerBinding("replacementsolutions", "closeSurfacePicker", CloseSurfacePicker));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "openSurfaceScaleEditor", OpenSurfaceScaleEditor));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceScalePreview", SetSurfaceScalePreview));
+            AddBinding(new TriggerBinding("replacementsolutions", "applySurfaceScale", ApplySurfaceScale));
+            AddBinding(new TriggerBinding("replacementsolutions", "cancelSurfaceScale", CancelSurfaceScale));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "saveRules", SetRulesJson));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "saveAreaRules", SetAreaRulesJson));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "replaceSurfaces", ReplaceSurfaces));
@@ -219,6 +281,10 @@ namespace AutomaticTextureReplacer
                  string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
             bool prefabsReady = prefabSystem != null && !m_SurfaceQuery.IsEmptyIgnoreFilter;
+            if (mapReady && prefabsReady)
+            {
+                RestoreConfiguredSurfaceScales(prefabSystem);
+            }
             if (!m_CustomTextureScanStarted)
             {
                 StartCustomTextureScan();
@@ -352,6 +418,35 @@ namespace AutomaticTextureReplacer
             m_DialogOpen.Update(isOpen);
         }
 
+        private void ToggleModDialogs()
+        {
+            if (Mod.Settings == null)
+            {
+                return;
+            }
+
+            bool anyDialogOpen = Mod.Settings.DialogOpen || Mod.Settings.SurfacePickerOpen || m_SurfaceScaleEditorIsOpen;
+            if (anyDialogOpen)
+            {
+                if (m_SurfaceScaleEditorIsOpen)
+                {
+                    CancelSurfaceScale();
+                }
+
+                m_RestorePickerOnNextToolbarOpen = Mod.Settings.SurfacePickerOpen;
+                CloseSurfacePicker();
+                SetDialogOpen(false);
+                return;
+            }
+
+            SetDialogOpen(true);
+            if (m_RestorePickerOnNextToolbarOpen)
+            {
+                m_RestorePickerOnNextToolbarOpen = false;
+                OpenSurfacePicker(Mod.Settings.SurfacePickerContextJson);
+            }
+        }
+
         private void SetDialogPosition(string value)
         {
             string[] parts = value?.Split(',');
@@ -426,6 +521,414 @@ namespace AutomaticTextureReplacer
             Mod.Settings.AreaRulesJson = json;
             Mod.Settings.ApplyAndSave();
             m_AreaRulesJson.Update(json);
+        }
+
+        private void LoadSurfaceScaleValues(string json)
+        {
+            m_SurfaceScaleValues.Clear();
+            try
+            {
+                Dictionary<string, float> values = JSON.MakeInto<Dictionary<string, float>>(JSON.Load(json ?? "{}"));
+                if (values == null)
+                {
+                    return;
+                }
+
+                foreach (KeyValuePair<string, float> value in values)
+                {
+                    if (!string.IsNullOrWhiteSpace(value.Key) && !float.IsNaN(value.Value) && !float.IsInfinity(value.Value))
+                    {
+                        m_SurfaceScaleValues[value.Key] = ClampSurfaceScale(value.Value);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface scale values");
+            }
+        }
+
+        private string SerializeSurfaceScaleValues()
+        {
+            return JSON.Dump(m_SurfaceScaleValues);
+        }
+
+        private static float ClampSurfaceScale(float scale)
+        {
+            return Mathf.Clamp(Mathf.Round(scale * 10f) / 10f, 0.1f, 20f);
+        }
+
+        private void OpenSurfaceScaleEditor(string request)
+        {
+            string surfaceId = request;
+            string origin = "picker";
+            int lastComma = request?.LastIndexOf(',') ?? -1;
+            int yComma = lastComma > 0 ? request.LastIndexOf(',', lastComma - 1) : -1;
+            int xComma = yComma > 0 ? request.LastIndexOf(',', yComma - 1) : -1;
+            if (xComma > 0 &&
+                int.TryParse(request.Substring(xComma + 1, yComma - xComma - 1), out int cursorX) &&
+                int.TryParse(request.Substring(yComma + 1, lastComma - yComma - 1), out int cursorY))
+            {
+                m_SurfaceScaleEditorX.Update(cursorX);
+                m_SurfaceScaleEditorY.Update(cursorY);
+                origin = request.Substring(lastComma + 1) == "main" ? "main" : "picker";
+                surfaceId = request.Substring(0, xComma);
+            }
+
+            if (string.IsNullOrWhiteSpace(surfaceId) ||
+                !TryFindSurfacePrefab(surfaceId, out _, out PrefabBase prefab, out RenderedArea renderedArea))
+            {
+                return;
+            }
+
+            m_ActiveSurfaceScaleId = surfaceId;
+            m_ActiveSurfaceScaleHadSavedValue = m_SurfaceScaleValues.TryGetValue(surfaceId, out m_ActiveSurfaceScaleSavedValue);
+            m_ActiveSurfaceScaleBefore = m_ActiveSurfaceScaleHadSavedValue ? m_ActiveSurfaceScaleSavedValue : 1f;
+            m_ActiveSurfaceScaleCurrent = m_ActiveSurfaceScaleBefore;
+            m_SurfaceScaleSurfaceId.Update(surfaceId);
+            m_SurfaceScaleSurfaceName.Update(prefab.name ?? surfaceId);
+            m_SurfaceScaleEditorOrigin.Update(origin);
+            m_SurfaceScaleTenths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 10f));
+            m_SurfaceScaleEditorIsOpen = true;
+            m_SurfaceScaleEditorOpen.Update(true);
+        }
+
+        private float m_ActiveSurfaceScaleCurrent = 1f;
+
+        private void SetSurfaceScalePreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !int.TryParse(value, out int tenths))
+            {
+                return;
+            }
+
+            tenths = Mathf.Clamp(tenths, 1, 200);
+            m_ActiveSurfaceScaleCurrent = tenths / 10f;
+            SetSurfaceScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceScaleTenths.Update(tenths);
+            m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+        }
+
+        private void ApplySurfaceScale()
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId))
+            {
+                m_SurfaceScaleEditorOpen.Update(false);
+                return;
+            }
+
+            SetSurfaceScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            if (Mod.Settings != null)
+            {
+                Mod.Settings.SurfaceScalesJson = SerializeSurfaceScaleValues();
+                Mod.Settings.ApplyAndSave();
+            }
+
+            m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+            CloseSurfaceScaleEditor();
+        }
+
+        private void CancelSurfaceScale()
+        {
+            if (!string.IsNullOrEmpty(m_ActiveSurfaceScaleId))
+            {
+                if (m_ActiveSurfaceScaleHadSavedValue)
+                {
+                    m_SurfaceScaleValues[m_ActiveSurfaceScaleId] = m_ActiveSurfaceScaleSavedValue;
+                }
+                else
+                {
+                    m_SurfaceScaleValues.Remove(m_ActiveSurfaceScaleId);
+                }
+
+                ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleBefore, updatePrefab: true);
+                m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+            }
+
+            CloseSurfaceScaleEditor();
+        }
+
+        private void CloseSurfaceScaleEditor()
+        {
+            m_ActiveSurfaceScaleId = null;
+            m_SurfaceScaleEditorIsOpen = false;
+            m_SurfaceScaleSurfaceId.Update("");
+            m_SurfaceScaleSurfaceName.Update("");
+            m_SurfaceScaleEditorOpen.Update(false);
+        }
+
+        private void SetSurfaceScaleValue(string surfaceId, float scale)
+        {
+            scale = ClampSurfaceScale(scale);
+            if (Mathf.Abs(scale - 1f) < 0.001f)
+            {
+                m_SurfaceScaleValues.Remove(surfaceId);
+            }
+            else
+            {
+                m_SurfaceScaleValues[surfaceId] = scale;
+            }
+        }
+
+        private bool TryFindSurfacePrefab(string surfaceId, out Entity surfaceEntity, out PrefabBase surfacePrefab, out RenderedArea renderedArea)
+        {
+            using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if ((!EntityManager.HasComponent<SurfaceData>(entity) && !EntityManager.HasComponent<AreaData>(entity)) ||
+                        !m_PrefabSystemForScale().TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab prefab) ||
+                        prefab == null || !string.Equals(prefab.GetPrefabID().ToString(), surfaceId, StringComparison.Ordinal) ||
+                        !prefab.TryGet<RenderedArea>(out renderedArea) || renderedArea == null)
+                    {
+                        continue;
+                    }
+
+                    surfaceEntity = entity;
+                    surfacePrefab = prefab;
+                    return true;
+                }
+            }
+
+            surfaceEntity = Entity.Null;
+            surfacePrefab = null;
+            renderedArea = null;
+            return false;
+        }
+
+        private PrefabSystem m_PrefabSystemForScale()
+        {
+            return World.GetExistingSystemManaged<PrefabSystem>();
+        }
+
+        private void RestoreConfiguredSurfaceScales(PrefabSystem prefabSystem)
+        {
+            m_AreaBatchSystem ??= World.GetOrCreateSystemManaged<AreaBatchSystem>();
+            foreach (KeyValuePair<string, float> entry in m_SurfaceScaleValues.ToArray())
+            {
+                if (m_RestoredSurfaceScaleIds.Contains(entry.Key))
+                {
+                    continue;
+                }
+
+                if (TryFindSurfacePrefab(entry.Key, out _, out PrefabBase _, out RenderedArea renderedArea))
+                {
+                    if (ApplySurfaceScaleToPrefab(entry.Key, entry.Value, updatePrefab: true, prefabSystem))
+                    {
+                        m_RestoredSurfaceScaleIds.Add(entry.Key);
+                    }
+                }
+            }
+        }
+
+        private bool ApplySurfaceScaleToPrefab(string surfaceId, float scale, bool updatePrefab, PrefabSystem prefabSystem = null)
+        {
+            prefabSystem ??= World.GetExistingSystemManaged<PrefabSystem>();
+            if (prefabSystem == null)
+            {
+                return false;
+            }
+
+            m_AreaBatchSystem ??= World.GetOrCreateSystemManaged<AreaBatchSystem>();
+            bool applied = false;
+            using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if ((!EntityManager.HasComponent<SurfaceData>(entity) && !EntityManager.HasComponent<AreaData>(entity)) ||
+                        !prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab prefab) || prefab == null ||
+                        !string.Equals(prefab.GetPrefabID().ToString(), surfaceId, StringComparison.Ordinal) ||
+                        !prefab.TryGet<RenderedArea>(out RenderedArea renderedArea) || renderedArea == null)
+                    {
+                        continue;
+                    }
+
+                    int prefabBatchIndex = EntityManager.HasComponent<RenderedAreaData>(entity)
+                        ? EntityManager.GetComponentData<RenderedAreaData>(entity).m_BatchIndex
+                        : -1;
+                    Material sourceMaterial = renderedArea.m_Material;
+                    int materialUvScaleProperty = s_AreaBatchUvScaleField != null
+                        ? (int)s_AreaBatchUvScaleField.GetValue(m_AreaBatchSystem)
+                        : 0;
+                    bool sourceHasScale = sourceMaterial != null && materialUvScaleProperty != 0 &&
+                        sourceMaterial.HasProperty(materialUvScaleProperty);
+                    if (!sourceHasScale && prefabBatchIndex >= 0 &&
+                        m_AreaBatchSystem.GetAreaBatch(prefabBatchIndex, out _, out _, out _, out Material batchMaterial, out _, out _, out _) &&
+                        batchMaterial != null && materialUvScaleProperty != 0 && batchMaterial.HasProperty(materialUvScaleProperty))
+                    {
+                        sourceMaterial = batchMaterial;
+                        sourceHasScale = true;
+                    }
+
+                    // A prefab's batch may not exist yet when settings are restored
+                    // just after map load. Try a live instance batch and retry on
+                    // later updates if neither material is ready.
+                    if (!sourceHasScale)
+                    {
+                        using (NativeArray<Entity> instances = m_SurfaceScaleInstancesQuery.ToEntityArray(Allocator.Temp))
+                        {
+                            foreach (Entity instance in instances)
+                            {
+                                if (!EntityManager.Exists(instance) ||
+                                    EntityManager.GetComponentData<PrefabRef>(instance).m_Prefab != entity)
+                                {
+                                    continue;
+                                }
+
+                                int instanceBatch = EntityManager.GetComponentData<Batch>(instance).m_BatchIndex;
+                                if (m_AreaBatchSystem.GetAreaBatch(instanceBatch, out _, out _, out _, out Material instanceMaterial, out _, out _, out _) &&
+                                    instanceMaterial != null && materialUvScaleProperty != 0 && instanceMaterial.HasProperty(materialUvScaleProperty))
+                                {
+                                    sourceMaterial = instanceMaterial;
+                                    sourceHasScale = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!sourceHasScale || sourceMaterial == null)
+                    {
+                        if (m_SurfaceScaleMaterialUnavailableLogged.Add(surfaceId))
+                        {
+                            Mod.Log.InfoFormat(
+                                "Surface texture scale is waiting for its AreaBatch material: surface='{0}', prefabBatch={1}",
+                                prefab.name,
+                                prefabBatchIndex);
+                        }
+                        continue;
+                    }
+
+                    if (!m_SurfaceScaleBaseValues.TryGetValue(surfaceId, out float baseScale))
+                    {
+                        baseScale = sourceMaterial.GetFloat(materialUvScaleProperty);
+                        m_SurfaceScaleBaseValues[surfaceId] = baseScale;
+                    }
+
+                    // AreaBatchSystem applies RenderedArea.m_UVScale only when the
+                    // component uses OverrideMaterial. Keep a private material copy
+                    // and copy its scalar settings into RenderedArea before enabling
+                    // that native path, so this does not mutate shared materials or
+                    // reset the source surface's appearance.
+                    if (!m_SurfaceScaleMaterialCloneIds.Contains(surfaceId) && sourceMaterial != null)
+                    {
+                        Material prefabMaterial = new Material(sourceMaterial)
+                        {
+                            name = "Replacement Solutions Surface Material (" + prefab.name + ")",
+                        };
+                        CopyMaterialSettingsToRenderedArea(prefabMaterial, renderedArea);
+                        renderedArea.m_Material = prefabMaterial;
+                        renderedArea.m_Version = RenderedArea.Version.OverrideMaterial;
+                        m_SurfaceScaleMaterialCloneIds.Add(surfaceId);
+                        Mod.Log.InfoFormat(
+                            "Surface texture scale material prepared: surface='{0}', sourceMaterial='{1}', baseline={2}, shader='{3}', version={4}",
+                            prefab.name,
+                            sourceMaterial.name,
+                            baseScale,
+                            sourceMaterial.shader != null ? sourceMaterial.shader.name : "<no shader>",
+                            renderedArea.m_Version);
+                    }
+
+                    // UV scale is a repeat count: smaller UV scale makes the image
+                    // occupy more world space. Divide by the user-facing factor so
+                    // Scale 10 means ten times larger texture details.
+                    float scaledUv = baseScale / ClampSurfaceScale(scale);
+                    renderedArea.m_UVScale = scaledUv;
+                    renderedArea.m_Material.SetFloat(materialUvScaleProperty, scaledUv);
+                    if (updatePrefab)
+                    {
+                        prefabSystem.UpdatePrefab(prefab);
+                    }
+
+                    SetAreaBatchUvScale(prefabBatchIndex, scaledUv);
+
+                    // Existing area instances can hold their own batch index even
+                    // though they share this surface prefab. Update those batches
+                    // too, otherwise only newly created/replaced surfaces use the
+                    // selected UV scale.
+                    using (NativeArray<Entity> instances = m_SurfaceScaleInstancesQuery.ToEntityArray(Allocator.Temp))
+                    {
+                        foreach (Entity instance in instances)
+                        {
+                            if (!EntityManager.Exists(instance) ||
+                                EntityManager.GetComponentData<PrefabRef>(instance).m_Prefab != entity)
+                            {
+                                continue;
+                            }
+
+                            int instanceBatch = EntityManager.GetComponentData<Batch>(instance).m_BatchIndex;
+                            SetAreaBatchUvScale(instanceBatch, scaledUv);
+                        }
+                    }
+
+                    Mod.Log.InfoFormat(
+                        "Surface texture scale applied: surface='{0}', factor={1}, uvScale={2}, prefabBatch={3}, updatedPrefab={4}",
+                        prefab.name,
+                        ClampSurfaceScale(scale),
+                        scaledUv,
+                        prefabBatchIndex,
+                        updatePrefab);
+                    applied = true;
+                }
+            }
+
+            if (applied && m_SurfaceScaleValues.ContainsKey(surfaceId))
+            {
+                m_RestoredSurfaceScaleIds.Add(surfaceId);
+            }
+            else if (!applied)
+            {
+                m_RestoredSurfaceScaleIds.Remove(surfaceId);
+            }
+            return applied;
+        }
+
+        private static void CopyMaterialSettingsToRenderedArea(Material material, RenderedArea renderedArea)
+        {
+            if (material.HasProperty(s_BaseColorProperty)) renderedArea.m_BaseColor = material.GetColor(s_BaseColorProperty);
+            if (material.HasProperty(s_MetallicProperty)) renderedArea.m_Metallic = material.GetFloat(s_MetallicProperty);
+            if (material.HasProperty(s_SmoothnessProperty)) renderedArea.m_Smoothness = material.GetFloat(s_SmoothnessProperty);
+            if (material.HasProperty(s_NormalOpacityProperty)) renderedArea.m_NormalOpacity = material.GetFloat(s_NormalOpacityProperty);
+            if (material.HasProperty(s_MetallicOpacityProperty)) renderedArea.m_MetallicOpacity = material.GetFloat(s_MetallicOpacityProperty);
+            if (material.HasProperty(s_NormalAlphaSourceProperty)) renderedArea.m_NormalAlphaSource = material.GetFloat(s_NormalAlphaSourceProperty);
+            if (material.HasProperty(s_MetallicAlphaSourceProperty)) renderedArea.m_MetallicAlphaSource = material.GetFloat(s_MetallicAlphaSourceProperty);
+            if (material.HasProperty(s_EdgeNormalProperty)) renderedArea.m_EdgeNormal = material.GetFloat(s_EdgeNormalProperty);
+            if (material.HasProperty(s_EdgeFadeRangeProperty))
+            {
+                Vector4 value = material.GetVector(s_EdgeFadeRangeProperty);
+                renderedArea.m_EdgeFadeRange = new float2(value.x, value.y);
+            }
+            if (material.HasProperty(s_EdgeNormalRangeProperty))
+            {
+                Vector4 value = material.GetVector(s_EdgeNormalRangeProperty);
+                renderedArea.m_EdgeNormalRange = new float2(value.x, value.y);
+            }
+            if (material.HasProperty(s_EdgeNoiseProperty))
+            {
+                Vector4 value = material.GetVector(s_EdgeNoiseProperty);
+                renderedArea.m_EdgeNoise = new float2(value.x, value.y);
+            }
+        }
+
+        private void SetAreaBatchUvScale(int batchIndex, float uvScale)
+        {
+            if (m_AreaBatchSystem == null || batchIndex < 0 || batchIndex >= m_AreaBatchSystem.GetBatchCount() ||
+                s_AreaBatchUvScaleField == null)
+            {
+                return;
+            }
+
+            int uvScaleProperty = (int)s_AreaBatchUvScaleField.GetValue(m_AreaBatchSystem);
+            if (uvScaleProperty == 0 ||
+                !m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material material, out _, out _, out _) ||
+                material == null || !material.HasProperty(uvScaleProperty))
+            {
+                return;
+            }
+
+            material.SetFloat(uvScaleProperty, uvScale);
         }
 
         private void ReplaceSurfaces(string requestedRuleId)
@@ -742,6 +1245,17 @@ namespace AutomaticTextureReplacer
             string prefabName = "Replacement Solutions Custom " + stableHash + " " + safeName;
             SurfacePrefab custom = (SurfacePrefab)template.Clone(prefabName);
             custom.Remove<UIObject>();
+            UIAssetCategoryPrefab surfaceCategory = FindTilesSurfacesMenuCategory(prefabSystem);
+            if (surfaceCategory != null)
+            {
+                UIObject uiObject = custom.AddComponent<UIObject>();
+                uiObject.m_Group = surfaceCategory;
+                uiObject.m_Priority = 0;
+            }
+            else
+            {
+                Mod.Log.WarnFormat("Custom surface could not be added to the Tiles / Surfaces menu because its category was not found: '{0}'", file.FullPath);
+            }
             if (!custom.TryGet<RenderedArea>(out RenderedArea renderedArea) || renderedArea == null)
             {
                 return false;
@@ -764,7 +1278,81 @@ namespace AutomaticTextureReplacer
 
             surfaceEntity = prefabSystem.GetEntity(custom);
             prefabSystem.UpdatePrefab(custom);
+            if (surfaceCategory != null)
+            {
+                Mod.Log.InfoFormat(
+                    "Custom surface added to game menu: surface='{0}', menu='{1}', category='{2}'",
+                    custom.name,
+                    surfaceCategory.m_Menu != null ? surfaceCategory.m_Menu.name : "<no menu>",
+                    surfaceCategory.name);
+            }
             return surfaceEntity != Entity.Null;
+        }
+
+        private UIAssetCategoryPrefab FindTilesSurfacesMenuCategory(PrefabSystem prefabSystem)
+        {
+            if (prefabSystem == null)
+            {
+                return null;
+            }
+
+            // Reuse the category assigned to the game's own Tiles Surface prefabs;
+            // this remains correct if the game localizes or renames the menu labels.
+            using (NativeArray<Entity> surfaces = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in surfaces)
+                {
+                    if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab surface) || surface == null ||
+                        surface.isBuiltin != true ||
+                        !(surface.name.StartsWith("Tiles Surface", StringComparison.OrdinalIgnoreCase) ||
+                          surface.name.StartsWith("Tile Surface", StringComparison.OrdinalIgnoreCase)) ||
+                        !surface.TryGet<UIObject>(out UIObject uiObject) ||
+                        !(uiObject.m_Group is UIAssetCategoryPrefab category) || category.m_Menu == null)
+                    {
+                        continue;
+                    }
+
+                    return category;
+                }
+            }
+
+            // Fallback for game versions that rename the built-in surface assets.
+            EntityManager entityManager = prefabSystem.World.EntityManager;
+            using EntityQuery query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PrefabData>(),
+                ComponentType.ReadOnly<UIAssetMenuData>(),
+                ComponentType.ReadOnly<UIGroupElement>());
+            using NativeArray<Entity> menus = query.ToEntityArray(Allocator.Temp);
+            foreach (Entity menuEntity in menus)
+            {
+                if (!prefabSystem.TryGetPrefab<UIAssetMenuPrefab>(menuEntity, out UIAssetMenuPrefab menu) || menu == null)
+                {
+                    continue;
+                }
+
+                DynamicBuffer<UIGroupElement> categories = entityManager.GetBuffer<UIGroupElement>(menuEntity, true);
+                foreach (UIGroupElement categoryElement in categories)
+                {
+                    if (!prefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryElement.m_Prefab, out UIAssetCategoryPrefab category) ||
+                        category == null || category.m_Menu == null)
+                    {
+                        continue;
+                    }
+
+                    string menuName = menu.name ?? string.Empty;
+                    string categoryName = category.name ?? string.Empty;
+                    bool hasTiles = menuName.IndexOf("tile", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        categoryName.IndexOf("tile", StringComparison.OrdinalIgnoreCase) >= 0;
+                    bool hasSurfaces = menuName.IndexOf("surface", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        categoryName.IndexOf("surface", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (hasTiles && hasSurfaces)
+                    {
+                        return category;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static string SanitizePrefabName(string value)

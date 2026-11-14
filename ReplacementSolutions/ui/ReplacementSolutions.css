@@ -44,7 +44,7 @@
 .atrRuleActions>.atrButtonOuter>.atrGameButton{height:100%!important;min-height:100%!important;box-sizing:border-box}
 .atrRuleSurfaceIcons{display:flex!important;min-width:0;width:100%;flex:0 0 auto;flex-direction:row!important;flex-wrap:wrap!important;align-content:flex-start;align-items:flex-start;justify-content:flex-start;gap:4rem}
 .atrRuleSurfaceIcons>*{display:flex!important;width:38rem!important;height:38rem!important;flex:0 0 38rem!important}
-.atrRuleSurfaceIconFrame{display:flex;width:38rem;height:38rem;flex:0 0 38rem;box-sizing:border-box;align-items:center;justify-content:center;border:1rem solid rgba(190,222,236,.42);border-radius:3rem;background:rgba(13,32,45,.55);overflow:hidden}
+.atrRuleSurfaceIconFrame{position:relative;display:flex;width:38rem;height:38rem;flex:0 0 38rem;box-sizing:border-box;align-items:center;justify-content:center;border:1rem solid rgba(190,222,236,.42);border-radius:3rem;background:rgba(13,32,45,.55);overflow:hidden}
 .atrRuleSurfaceIcon{display:block;width:100%;height:100%;box-sizing:border-box}
 .atrEditButton,.atrReplaceButton,.atrDeleteRuleButton{height:38rem!important;min-height:38rem!important;box-sizing:border-box;align-items:center!important;justify-content:center!important}
 .atrEditButton{padding:0 10rem!important;border-radius:0!important;line-height:1.2}
@@ -68,6 +68,7 @@
 .atrPickerGroupHeader{display:flex;width:100%;min-height:34rem;flex-direction:row;align-items:center;justify-content:flex-start;gap:6rem;box-sizing:border-box;margin-bottom:4rem;padding:4rem 6rem;background:rgba(26,43,59,.62);color:rgba(255,255,255,.94);text-align:left}
 .atrPickerGroupToggle{display:flex;min-width:0;min-height:30rem;flex:1 1 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:8rem;padding:2rem 4rem;border:0;background:transparent;color:rgba(255,255,255,.94);text-align:left;cursor:pointer}
 .atrTintedPrimaryButton-blue{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
+.atrTintedPrimaryButton-green{background:#0ca66b!important;border:2rem solid #42d49b!important;color:rgba(255,255,255,.98)!important}
 .atrPickerGroupActions{display:flex;flex:0 0 auto;flex-direction:row;align-items:center;gap:4rem}
 .atrPickerGroupActions button,.atrPickerGroupActions [role="button"]{padding:3rem 7rem;font-size:11rem}
 .atrPickerGroupArrow{width:16rem;flex:0 0 16rem;text-align:center;color:rgba(110,205,239,.96)}
@@ -79,6 +80,7 @@
 .atrSurfaceTooltip{display:flex;flex-direction:column;gap:3rem;max-width:300rem;white-space:normal}
 .atrSurfaceTooltip strong{color:rgba(255,255,255,.98)}
 .atrSurfaceTooltip span{color:rgba(255,255,255,.7)}
+.atrSurfaceTooltipPath{overflow-wrap:anywhere;word-break:break-word;white-space:normal}
 .atrPickerEmpty{padding:12rem;color:rgba(255,255,255,.7)}
 .atrPickerFooter{display:flex;flex:0 0 auto;flex-direction:row;justify-content:flex-end;gap:8rem;box-sizing:border-box;margin:6rem -8rem -8rem;padding:14rem 18rem;background:rgba(18,27,34,.98)}
 .atrPickerResizeCorner{position:absolute;bottom:0;z-index:100;width:24rem;height:24rem;pointer-events:auto}
@@ -86,3 +88,21 @@
 .atrSurfaceTile>img:first-child{display:block;width:100%;height:100%}
 .atrSurfaceTooltip{width:320rem;max-width:520rem}
 .atrSurfaceTooltipImage{display:block;width:100%;max-height:360rem;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem}
+.atrScaleBadge{position:absolute;top:2rem;right:2rem;z-index:2;padding:1rem 3rem;border-radius:2rem;background:rgba(8,24,38,.88);color:#fff;font-size:9rem;font-weight:600;line-height:1.15;white-space:nowrap;text-shadow:0 1rem 2rem #000;pointer-events:none}
+.atrRuleSurfaceIconFrame>.atrScaleBadge{top:0;right:0;font-size:6rem;padding:0 2rem}
+.atrScaleDialogPositioner{position:absolute;width:900rem;height:720rem;min-width:0;min-height:0;z-index:1200;pointer-events:none}
+.atrScaleDialogPanel{width:100%;height:100%}
+.atrScaleDialogPositioner>.atrScaleDialogPanel,.atrScaleDialogPositioner>.atrFallbackPanel{pointer-events:auto}
+.atrScaleDialogPanelContent{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
+.atrScaleDialogHeader{min-height:36rem;cursor:move;user-select:none}
+.atrScaleDialogBody{display:flex;flex:1 1 auto;min-width:0;min-height:0;flex-direction:column;gap:10rem;box-sizing:border-box;padding:16rem 20rem;color:rgba(255,255,255,.94);overflow:hidden}
+.atrScaleSurfaceDetails{display:flex;min-width:0;min-height:0;flex:1 1 auto;overflow:hidden}
+.atrScaleSurfaceDetails .atrSurfaceTooltip{display:flex;width:100%;max-width:none;height:100%;min-height:0;flex-direction:column;gap:5rem;overflow:hidden}
+.atrScaleSurfaceDetails .atrSurfaceTooltip strong,.atrScaleSurfaceDetails .atrSurfaceTooltip span{flex:0 0 auto;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.atrScaleSurfaceDetails .atrSurfaceTooltipImage{display:block;width:auto;height:auto;max-width:100%;max-height:100%;min-height:0;flex:1 1 auto;align-self:center;object-fit:contain}
+.atrScaleControlRow{display:flex;flex:0 0 auto;align-items:center;gap:16rem;min-width:0}
+.atrScaleGameSlider{min-width:0;flex:1 1 auto}
+.atrScaleCurrentValue{flex:0 0 auto;text-align:right;font-size:1.2em;font-weight:600;color:#69d5f0;white-space:nowrap}
+.atrScaleSlider{width:100%;margin:4rem 0;accent-color:#38c896}
+.atrScaleRangeLabels{display:flex;justify-content:space-between;color:rgba(255,255,255,.65)}
+.atrScaleDialogFooter{display:flex;justify-content:flex-end;gap:8rem;margin-top:auto}
