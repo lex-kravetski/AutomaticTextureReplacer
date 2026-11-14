@@ -31,6 +31,9 @@ namespace AutomaticTextureReplacer
         [SettingsUISection(kMainSection)]
         public bool ShowRevertAllButton { get; set; }
 
+        [SettingsUISection(kMainSection)]
+        public bool ShowSurfaceBaseColorSettings { get; set; }
+
         [SettingsUIHidden]
         public bool DialogOpen { get; set; }
 
@@ -104,6 +107,9 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public string SurfaceEdgeNoiseScalesJson { get; set; } = "{}";
 
+        [SettingsUIHidden]
+        public string SurfaceBaseColorsJson { get; set; } = "{}";
+
 
         public override void SetDefaults()
         {
@@ -128,11 +134,13 @@ namespace AutomaticTextureReplacer
             SurfaceEdgeFadeEndsJson = "{}";
             SurfaceEdgeNoisesJson = "{}";
             SurfaceEdgeNoiseScalesJson = "{}";
+            SurfaceBaseColorsJson = "{}";
             DialogFontSize = 100;
             ShowInGameSurfacesAsTargets = false;
             ShowSpecialIndustrySurfacesAsTargets = false;
             ShowModSurfacesAsSources = false;
             ShowRevertAllButton = false;
+            ShowSurfaceBaseColorSettings = false;
             ReplacementScope = "assets";
             ActiveMainTab = "surfaces";
             AlsoNewBuildings = false;
@@ -166,6 +174,8 @@ namespace AutomaticTextureReplacer
                 { m_Settings.GetOptionDescLocaleID(nameof(ReplacementSolutionsSettings.ShowModSurfacesAsSources)), "Include mod-provided surfaces in the source surface picker." },
                 { m_Settings.GetOptionLabelLocaleID(nameof(ReplacementSolutionsSettings.ShowRevertAllButton)), "Show Revert All button" },
                 { m_Settings.GetOptionDescLocaleID(nameof(ReplacementSolutionsSettings.ShowRevertAllButton)), "Show the button that restores surface prefabs from their default assets." },
+                { m_Settings.GetOptionLabelLocaleID(nameof(ReplacementSolutionsSettings.ShowSurfaceBaseColorSettings)), "Show texture base color settings" },
+                { m_Settings.GetOptionDescLocaleID(nameof(ReplacementSolutionsSettings.ShowSurfaceBaseColorSettings)), "Show Hue, Saturation, Brightness, and Alpha controls in Surface Parameters." },
             };
         }
 

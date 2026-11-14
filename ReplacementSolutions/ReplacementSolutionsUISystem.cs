@@ -39,6 +39,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
         private ValueBinding<bool> m_ShowModSurfacesAsSources;
         private ValueBinding<bool> m_ShowRevertAllButton;
+        private ValueBinding<bool> m_ShowSurfaceBaseColorSettings;
         private ValueBinding<int> m_SurfacePickerX;
         private ValueBinding<int> m_SurfacePickerY;
         private ValueBinding<int> m_SurfacePickerWidth;
@@ -55,6 +56,7 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_SurfaceEdgeFadeEndsJson;
         private ValueBinding<string> m_SurfaceEdgeNoisesJson;
         private ValueBinding<string> m_SurfaceEdgeNoiseScalesJson;
+        private ValueBinding<string> m_SurfaceBaseColorsJson;
         private ValueBinding<bool> m_SurfaceScaleEditorOpen;
         private ValueBinding<string> m_SurfaceScaleSurfaceId;
         private ValueBinding<string> m_SurfaceScaleSurfaceName;
@@ -66,6 +68,10 @@ namespace AutomaticTextureReplacer
         private ValueBinding<float> m_SurfaceEdgeFadeDefault;
         private ValueBinding<float> m_SurfaceEdgeNoiseDefault;
         private ValueBinding<float> m_SurfaceEdgeNoiseScaleDefault;
+        private ValueBinding<float> m_SurfaceBaseColorHue;
+        private ValueBinding<float> m_SurfaceBaseColorSaturation;
+        private ValueBinding<float> m_SurfaceBaseColorBrightness;
+        private ValueBinding<float> m_SurfaceBaseColorAlpha;
         private ValueBinding<int> m_SurfaceScaleRevertVersion;
         private int m_SurfaceScaleRevertCounter;
         private ValueBinding<int> m_SurfaceScaleEditorX;
@@ -78,6 +84,7 @@ namespace AutomaticTextureReplacer
         private bool? m_LastShowSpecialIndustrySurfacesAsTargets;
         private bool? m_LastShowModSurfacesAsSources;
         private bool? m_LastShowRevertAllButton;
+        private bool? m_LastShowSurfaceBaseColorSettings;
         private bool m_SurfaceCatalogBuildStarted;
         private Entity m_TransparentSurfaceEntity;
         private bool m_TransparentSurfaceInitializationAttempted;
@@ -103,6 +110,8 @@ namespace AutomaticTextureReplacer
         private readonly Dictionary<string, float2> m_SurfaceEdgeFadeBaseValues = new Dictionary<string, float2>(StringComparer.Ordinal);
         private readonly Dictionary<string, float> m_SurfaceEdgeNoiseValues = new Dictionary<string, float>(StringComparer.Ordinal);
         private readonly Dictionary<string, float> m_SurfaceEdgeNoiseScaleValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Color> m_SurfaceBaseColors = new Dictionary<string, Color>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Color> m_SurfaceBaseColorDefaults = new Dictionary<string, Color>(StringComparer.Ordinal);
         private readonly Dictionary<string, float2> m_SurfaceEdgeNoiseBaseValues = new Dictionary<string, float2>(StringComparer.Ordinal);
         private readonly HashSet<string> m_SurfaceScaleMaterialCloneIds = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> m_SurfaceScaleMaterialUnavailableLogged = new HashSet<string>(StringComparer.Ordinal);
@@ -212,6 +221,10 @@ namespace AutomaticTextureReplacer
                 "replacementsolutions",
                 "showRevertAllButton",
                 settings?.ShowRevertAllButton ?? false));
+            AddBinding(m_ShowSurfaceBaseColorSettings = new ValueBinding<bool>(
+                "replacementsolutions",
+                "showSurfaceBaseColorSettings",
+                settings?.ShowSurfaceBaseColorSettings ?? false));
             AddBinding(m_SurfacePickerX = new ValueBinding<int>("replacementsolutions", "surfacePickerX", settings?.SurfacePickerX ?? -1));
             AddBinding(m_SurfacePickerY = new ValueBinding<int>("replacementsolutions", "surfacePickerY", settings?.SurfacePickerY ?? -1));
             AddBinding(m_SurfacePickerWidth = new ValueBinding<int>("replacementsolutions", "surfacePickerWidth", settings?.SurfacePickerWidth ?? -1));
@@ -241,6 +254,9 @@ namespace AutomaticTextureReplacer
             LoadSurfaceEdgeNoiseScaleValues(settings?.SurfaceEdgeNoiseScalesJson);
             AddBinding(m_SurfaceEdgeNoiseScalesJson = new ValueBinding<string>(
                 "replacementsolutions", "surfaceEdgeNoiseScalesJson", SerializeSurfaceEdgeNoiseScaleValues()));
+            LoadSurfaceBaseColors(settings?.SurfaceBaseColorsJson);
+            AddBinding(m_SurfaceBaseColorsJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceBaseColorsJson", SerializeSurfaceBaseColors()));
             AddBinding(m_SurfaceScaleEditorOpen = new ValueBinding<bool>("replacementsolutions", "surfaceScaleEditorOpen", false));
             AddBinding(m_SurfaceScaleSurfaceId = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceId", ""));
             AddBinding(m_SurfaceScaleSurfaceName = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceName", ""));
@@ -252,6 +268,10 @@ namespace AutomaticTextureReplacer
             AddBinding(m_SurfaceEdgeFadeDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeFadeDefault", 0f));
             AddBinding(m_SurfaceEdgeNoiseDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoiseDefault", 0f));
             AddBinding(m_SurfaceEdgeNoiseScaleDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoiseScaleDefault", 0.2f));
+            AddBinding(m_SurfaceBaseColorHue = new ValueBinding<float>("replacementsolutions", "surfaceBaseColorHue", 0f));
+            AddBinding(m_SurfaceBaseColorSaturation = new ValueBinding<float>("replacementsolutions", "surfaceBaseColorSaturation", 0f));
+            AddBinding(m_SurfaceBaseColorBrightness = new ValueBinding<float>("replacementsolutions", "surfaceBaseColorBrightness", 1f));
+            AddBinding(m_SurfaceBaseColorAlpha = new ValueBinding<float>("replacementsolutions", "surfaceBaseColorAlpha", 1f));
             AddBinding(m_SurfaceScaleRevertVersion = new ValueBinding<int>("replacementsolutions", "surfaceScaleRevertVersion", 0));
             AddBinding(m_SurfaceScaleEditorX = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorX", settings?.SurfaceParametersX ?? -1));
             AddBinding(m_SurfaceScaleEditorY = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorY", settings?.SurfaceParametersY ?? -1));
@@ -301,6 +321,7 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeFadeEndPreview", SetSurfaceEdgeFadeEndPreview));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeNoisePreview", SetSurfaceEdgeNoisePreview));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeNoiseScalePreview", SetSurfaceEdgeNoiseScalePreview));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceBaseColorPreview", SetSurfaceBaseColorPreview));
             AddBinding(new TriggerBinding("replacementsolutions", "revertSurfaceScale", RevertSurfaceScale));
             AddBinding(new TriggerBinding("replacementsolutions", "applySurfaceScale", ApplySurfaceScale));
             AddBinding(new TriggerBinding("replacementsolutions", "cancelSurfaceScale", CancelSurfaceScale));
@@ -460,6 +481,13 @@ namespace AutomaticTextureReplacer
             {
                 m_LastShowRevertAllButton = showRevertAllButton;
                 m_ShowRevertAllButton.Update(showRevertAllButton);
+            }
+
+            bool showSurfaceBaseColorSettings = Mod.Settings?.ShowSurfaceBaseColorSettings ?? false;
+            if (showSurfaceBaseColorSettings != m_LastShowSurfaceBaseColorSettings)
+            {
+                m_LastShowSurfaceBaseColorSettings = showSurfaceBaseColorSettings;
+                m_ShowSurfaceBaseColorSettings.Update(showSurfaceBaseColorSettings);
             }
         }
 
@@ -715,6 +743,41 @@ namespace AutomaticTextureReplacer
             return JSON.Dump(m_SurfaceEdgeNoiseScaleValues);
         }
 
+        private void LoadSurfaceBaseColors(string json)
+        {
+            m_SurfaceBaseColors.Clear();
+            try
+            {
+                Dictionary<string, string> values = JSON.MakeInto<Dictionary<string, string>>(JSON.Load(json ?? "{}"));
+                if (values == null) return;
+                foreach (KeyValuePair<string, string> value in values)
+                {
+                    string[] parts = (value.Value ?? string.Empty).Split(',');
+                    if (parts.Length == 4 && float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float r) &&
+                        float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float g) &&
+                        float.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float b) &&
+                        float.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float a))
+                    {
+                        m_SurfaceBaseColors[value.Key] = new Color(r, g, b, a);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface base colors");
+            }
+        }
+
+        private string SerializeSurfaceBaseColors()
+        {
+            Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, Color> value in m_SurfaceBaseColors)
+            {
+                values[value.Key] = string.Join(",", value.Value.r.ToString(System.Globalization.CultureInfo.InvariantCulture), value.Value.g.ToString(System.Globalization.CultureInfo.InvariantCulture), value.Value.b.ToString(System.Globalization.CultureInfo.InvariantCulture), value.Value.a.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return JSON.Dump(values);
+        }
+
         private static readonly float[] s_SurfaceScaleStops = Enumerable.Range(0, 39)
             .Select(index => Mathf.Round((0.1f + index * 0.05f) * 100f) / 100f)
             .ToArray();
@@ -782,6 +845,15 @@ namespace AutomaticTextureReplacer
                 : Mathf.Max(0.01f, defaultEdgeNoise.y);
             m_ActiveSurfaceEdgeNoiseScaleDefault = Mathf.Max(0.01f, defaultEdgeNoise.y);
             m_ActiveSurfaceEdgeNoiseScaleCurrent = m_ActiveSurfaceEdgeNoiseScaleBefore;
+            m_ActiveSurfaceBaseColorHadSavedValue = m_SurfaceBaseColors.TryGetValue(surfaceId, out m_ActiveSurfaceBaseColorSavedValue);
+            m_ActiveSurfaceBaseColorDefault = m_SurfaceBaseColorDefaults.TryGetValue(surfaceId, out Color capturedBaseColor)
+                ? capturedBaseColor
+                : renderedArea.m_BaseColor;
+            m_ActiveSurfaceBaseColorBefore = m_ActiveSurfaceBaseColorHadSavedValue
+                ? m_ActiveSurfaceBaseColorSavedValue
+                : m_ActiveSurfaceBaseColorDefault;
+            m_ActiveSurfaceBaseColorCurrent = m_ActiveSurfaceBaseColorBefore;
+            Color.RGBToHSV(m_ActiveSurfaceBaseColorCurrent, out float baseHue, out float baseSaturation, out float baseValue);
             m_SurfaceScaleSurfaceId.Update(surfaceId);
             m_SurfaceScaleSurfaceName.Update(prefab.name ?? surfaceId);
             m_SurfaceScaleEditorOrigin.Update(origin);
@@ -794,6 +866,10 @@ namespace AutomaticTextureReplacer
             m_SurfaceEdgeFadeDefault.Update(0f);
             m_SurfaceEdgeNoiseDefault.Update(defaultEdgeNoise.x);
             m_SurfaceEdgeNoiseScaleDefault.Update(m_ActiveSurfaceEdgeNoiseScaleDefault);
+            m_SurfaceBaseColorHue.Update(baseHue);
+            m_SurfaceBaseColorSaturation.Update(baseSaturation);
+            m_SurfaceBaseColorBrightness.Update(baseValue);
+            m_SurfaceBaseColorAlpha.Update(m_ActiveSurfaceBaseColorCurrent.a);
             m_SurfaceScaleEditorIsOpen = true;
             m_SurfaceScaleEditorOpen.Update(true);
         }
@@ -830,6 +906,11 @@ namespace AutomaticTextureReplacer
         private float m_ActiveSurfaceEdgeNoiseScaleSavedValue;
         private float m_ActiveSurfaceEdgeNoiseScaleCurrent;
         private bool m_ActiveSurfaceEdgeNoiseScaleHadSavedValue;
+        private Color m_ActiveSurfaceBaseColorBefore;
+        private Color m_ActiveSurfaceBaseColorDefault;
+        private Color m_ActiveSurfaceBaseColorCurrent;
+        private Color m_ActiveSurfaceBaseColorSavedValue;
+        private bool m_ActiveSurfaceBaseColorHadSavedValue;
 
         private void SetSurfaceScalePreview(string value)
         {
@@ -893,6 +974,26 @@ namespace AutomaticTextureReplacer
             m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
         }
 
+        private void SetSurfaceBaseColorPreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId)) return;
+            string[] parts = (value ?? string.Empty).Split(',');
+            if (parts.Length != 4 ||
+                !float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hue) ||
+                !float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float saturation) ||
+                !float.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float brightness) ||
+                !float.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float alpha)) return;
+            m_ActiveSurfaceBaseColorCurrent = Color.HSVToRGB(Mathf.Repeat(hue, 1f), Mathf.Clamp01(saturation), Mathf.Clamp01(brightness));
+            m_ActiveSurfaceBaseColorCurrent.a = Mathf.Clamp01(alpha);
+            if (m_SurfaceBaseColorDefaults.TryGetValue(m_ActiveSurfaceScaleId, out Color defaultBaseColor) &&
+                ColorDifference(m_ActiveSurfaceBaseColorCurrent, defaultBaseColor) < 0.0001f)
+                m_SurfaceBaseColors.Remove(m_ActiveSurfaceScaleId);
+            else
+                m_SurfaceBaseColors[m_ActiveSurfaceScaleId] = m_ActiveSurfaceBaseColorCurrent;
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceBaseColorsJson.Update(SerializeSurfaceBaseColors());
+        }
+
         private void ApplySurfaceScale()
         {
             if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId))
@@ -920,6 +1021,10 @@ namespace AutomaticTextureReplacer
                 m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
             else
                 SetSurfaceEdgeNoiseScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            if (ColorDifference(m_ActiveSurfaceBaseColorCurrent, m_ActiveSurfaceBaseColorDefault) < 0.0001f)
+                m_SurfaceBaseColors.Remove(m_ActiveSurfaceScaleId);
+            else
+                m_SurfaceBaseColors[m_ActiveSurfaceScaleId] = m_ActiveSurfaceBaseColorCurrent;
             ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
             if (Mod.Settings != null)
             {
@@ -928,6 +1033,7 @@ namespace AutomaticTextureReplacer
                 Mod.Settings.SurfaceEdgeFadeEndsJson = SerializeSurfaceEdgeFadeEndValues();
                 Mod.Settings.SurfaceEdgeNoisesJson = SerializeSurfaceEdgeNoiseValues();
                 Mod.Settings.SurfaceEdgeNoiseScalesJson = SerializeSurfaceEdgeNoiseScaleValues();
+                Mod.Settings.SurfaceBaseColorsJson = SerializeSurfaceBaseColors();
                 Mod.Settings.ApplyAndSave();
             }
 
@@ -936,6 +1042,7 @@ namespace AutomaticTextureReplacer
             m_SurfaceEdgeFadeEndsJson.Update(SerializeSurfaceEdgeFadeEndValues());
             m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
             m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
+            m_SurfaceBaseColorsJson.Update(SerializeSurfaceBaseColors());
             CloseSurfaceScaleEditor();
         }
 
@@ -947,21 +1054,29 @@ namespace AutomaticTextureReplacer
             m_SurfaceEdgeFadeEndValues.Remove(m_ActiveSurfaceScaleId);
             m_SurfaceEdgeNoiseValues.Remove(m_ActiveSurfaceScaleId);
             m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
+            m_SurfaceBaseColors.Remove(m_ActiveSurfaceScaleId);
             m_ActiveSurfaceScaleCurrent = m_ActiveSurfaceScaleDefault;
             m_ActiveSurfaceEdgeFadeCurrent = 0;
             m_ActiveSurfaceEdgeNoiseCurrent = m_ActiveSurfaceEdgeNoiseDefault;
             m_ActiveSurfaceEdgeNoiseScaleCurrent = m_ActiveSurfaceEdgeNoiseScaleDefault;
+            m_ActiveSurfaceBaseColorCurrent = m_ActiveSurfaceBaseColorDefault;
+            Color.RGBToHSV(m_ActiveSurfaceBaseColorCurrent, out float revertHue, out float revertSaturation, out float revertValue);
             ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
             m_SurfaceScaleHundredths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 100f));
             m_SurfaceEdgeFadePercent.Update(0);
             m_SurfaceEdgeFadeEndPercent.Update(0);
             m_SurfaceEdgeNoisePercent.Update(m_ActiveSurfaceEdgeNoiseCurrent);
             m_SurfaceEdgeNoiseScale.Update(m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            m_SurfaceBaseColorHue.Update(revertHue);
+            m_SurfaceBaseColorSaturation.Update(revertSaturation);
+            m_SurfaceBaseColorBrightness.Update(revertValue);
+            m_SurfaceBaseColorAlpha.Update(m_ActiveSurfaceBaseColorCurrent.a);
             m_SurfaceScaleRevertVersion.Update(++m_SurfaceScaleRevertCounter);
             m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
             m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
             m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
             m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
+            m_SurfaceBaseColorsJson.Update(SerializeSurfaceBaseColors());
             if (Mod.Settings != null)
             {
                 Mod.Settings.SurfaceScalesJson = SerializeSurfaceScaleValues();
@@ -969,6 +1084,7 @@ namespace AutomaticTextureReplacer
                 Mod.Settings.SurfaceEdgeFadeEndsJson = SerializeSurfaceEdgeFadeEndValues();
                 Mod.Settings.SurfaceEdgeNoisesJson = SerializeSurfaceEdgeNoiseValues();
                 Mod.Settings.SurfaceEdgeNoiseScalesJson = SerializeSurfaceEdgeNoiseScaleValues();
+                Mod.Settings.SurfaceBaseColorsJson = SerializeSurfaceBaseColors();
                 Mod.Settings.ApplyAndSave();
             }
         }
@@ -1010,12 +1126,18 @@ namespace AutomaticTextureReplacer
                 else
                     m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
 
+                if (m_ActiveSurfaceBaseColorHadSavedValue)
+                    m_SurfaceBaseColors[m_ActiveSurfaceScaleId] = m_ActiveSurfaceBaseColorSavedValue;
+                else
+                    m_SurfaceBaseColors.Remove(m_ActiveSurfaceScaleId);
+
                 ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleBefore, updatePrefab: true);
                 m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
                 m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
                 m_SurfaceEdgeFadeEndsJson.Update(SerializeSurfaceEdgeFadeEndValues());
                 m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
                 m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
+                m_SurfaceBaseColorsJson.Update(SerializeSurfaceBaseColors());
             }
 
             CloseSurfaceScaleEditor();
@@ -1045,6 +1167,11 @@ namespace AutomaticTextureReplacer
             {
                 m_SurfaceScaleValues[surfaceId] = scale;
             }
+        }
+
+        private static float ColorDifference(Color first, Color second)
+        {
+            return Mathf.Max(Mathf.Abs(first.r - second.r), Mathf.Abs(first.g - second.g), Mathf.Abs(first.b - second.b), Mathf.Abs(first.a - second.a));
         }
 
         private void SetSurfaceEdgeFadeValue(string surfaceId, float percent)
@@ -1119,6 +1246,7 @@ namespace AutomaticTextureReplacer
             configuredSurfaceIds.UnionWith(m_SurfaceEdgeFadeEndValues.Keys);
             configuredSurfaceIds.UnionWith(m_SurfaceEdgeNoiseValues.Keys);
             configuredSurfaceIds.UnionWith(m_SurfaceEdgeNoiseScaleValues.Keys);
+            configuredSurfaceIds.UnionWith(m_SurfaceBaseColors.Keys);
             foreach (string surfaceId in configuredSurfaceIds)
             {
                 if (m_RestoredSurfaceScaleIds.Contains(surfaceId))
@@ -1126,7 +1254,11 @@ namespace AutomaticTextureReplacer
                     continue;
                 }
 
-                float scale = m_SurfaceScaleValues.TryGetValue(surfaceId, out float savedScale) ? savedScale : 1f;
+                float scale = m_SurfaceScaleValues.TryGetValue(surfaceId, out float savedScale)
+                    ? savedScale
+                    : (m_SurfaceScaleBaseValues.TryGetValue(surfaceId, out float baseUvScale) && Mathf.Abs(baseUvScale) > 0.0001f
+                        ? ClampSurfaceScale(1f / baseUvScale)
+                        : 1f);
                 if (TryFindSurfacePrefab(surfaceId, out _, out PrefabBase _, out RenderedArea renderedArea))
                 {
                     if (ApplySurfaceScaleToPrefab(surfaceId, scale, updatePrefab: true, prefabSystem))
@@ -1155,6 +1287,7 @@ namespace AutomaticTextureReplacer
                     Material material = renderedArea.m_Material;
                     float2 edgeFade = renderedArea.m_EdgeFadeRange;
                     float2 edgeNoise = renderedArea.m_EdgeNoise;
+                    Color baseColor = renderedArea.m_BaseColor;
                     if (material != null && material.HasProperty(s_EdgeFadeRangeProperty))
                     {
                         Vector4 value = material.GetVector(s_EdgeFadeRangeProperty);
@@ -1165,10 +1298,12 @@ namespace AutomaticTextureReplacer
                         Vector4 value = material.GetVector(s_EdgeNoiseProperty);
                         edgeNoise = new float2(value.x, value.y);
                     }
+                    if (material != null && material.HasProperty(s_BaseColorProperty)) baseColor = material.GetColor(s_BaseColorProperty);
 
                     if (!m_SurfaceScaleBaseValues.ContainsKey(surfaceId)) m_SurfaceScaleBaseValues[surfaceId] = renderedArea.m_UVScale;
                     if (!m_SurfaceEdgeFadeBaseValues.ContainsKey(surfaceId)) m_SurfaceEdgeFadeBaseValues[surfaceId] = edgeFade;
                     if (!m_SurfaceEdgeNoiseBaseValues.ContainsKey(surfaceId)) m_SurfaceEdgeNoiseBaseValues[surfaceId] = edgeNoise;
+                    if (!m_SurfaceBaseColorDefaults.ContainsKey(surfaceId)) m_SurfaceBaseColorDefaults[surfaceId] = baseColor;
                 }
             }
         }
@@ -1356,6 +1491,11 @@ namespace AutomaticTextureReplacer
                     {
                         renderedArea.m_Material.SetVector(s_EdgeNoiseProperty, new Vector4(edgeNoise.x, edgeNoise.y, 0f, 0f));
                     }
+                    Color baseColor = m_SurfaceBaseColors.TryGetValue(surfaceId, out Color savedBaseColor)
+                        ? savedBaseColor
+                        : (m_SurfaceBaseColorDefaults.TryGetValue(surfaceId, out Color defaultBaseColor) ? defaultBaseColor : Color.white);
+                    renderedArea.m_BaseColor = baseColor;
+                    if (renderedArea.m_Material.HasProperty(s_BaseColorProperty)) renderedArea.m_Material.SetColor(s_BaseColorProperty, baseColor);
                     if (updatePrefab)
                     {
                         prefabSystem.UpdatePrefab(prefab);
@@ -1364,6 +1504,7 @@ namespace AutomaticTextureReplacer
                     SetAreaBatchUvScale(prefabBatchIndex, scaledUv);
                     SetAreaBatchEdgeFadeRange(prefabBatchIndex, edgeFadeRange);
                     SetAreaBatchEdgeNoise(prefabBatchIndex, edgeNoise);
+                    SetAreaBatchBaseColor(prefabBatchIndex, baseColor);
 
                     // Existing area instances can hold their own batch index even
                     // though they share this surface prefab. Update those batches
@@ -1383,6 +1524,7 @@ namespace AutomaticTextureReplacer
                             SetAreaBatchUvScale(instanceBatch, scaledUv);
                             SetAreaBatchEdgeFadeRange(instanceBatch, edgeFadeRange);
                             SetAreaBatchEdgeNoise(instanceBatch, edgeNoise);
+                            SetAreaBatchBaseColor(instanceBatch, baseColor);
                         }
                     }
 
@@ -1408,7 +1550,7 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            if (applied && (m_SurfaceScaleValues.ContainsKey(surfaceId) || m_SurfaceEdgeFadeValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseScaleValues.ContainsKey(surfaceId)))
+            if (applied && (m_SurfaceScaleValues.ContainsKey(surfaceId) || m_SurfaceEdgeFadeValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseScaleValues.ContainsKey(surfaceId) || m_SurfaceBaseColors.ContainsKey(surfaceId)))
             {
                 m_RestoredSurfaceScaleIds.Add(surfaceId);
             }
@@ -1503,6 +1645,15 @@ namespace AutomaticTextureReplacer
             }
 
             material.SetVector(s_EdgeNoiseProperty, new Vector4(edgeNoise.x, edgeNoise.y, 0f, 0f));
+        }
+
+        private void SetAreaBatchBaseColor(int batchIndex, Color color)
+        {
+            if (m_AreaBatchSystem == null || batchIndex < 0 || batchIndex >= m_AreaBatchSystem.GetBatchCount() ||
+                s_BaseColorProperty == 0 ||
+                !m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material material, out _, out _, out _) ||
+                material == null || !material.HasProperty(s_BaseColorProperty)) return;
+            material.SetColor(s_BaseColorProperty, color);
         }
 
 

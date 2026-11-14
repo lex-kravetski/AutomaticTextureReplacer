@@ -83,6 +83,7 @@ const register = (moduleRegistry) => {
   };
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
   const GameSlider = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "Slider");
+  const GameColorPicker = moduleRegistry.get("game-ui/common/input/color-picker/color-picker/color-picker.tsx", "ColorPicker");
   const useSliderStepTransformer = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "useStepTransformer");
 
   // Gameface slider versions have used both onChange(value) and
@@ -140,6 +141,7 @@ const register = (moduleRegistry) => {
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("replacementsolutions", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("replacementsolutions", "showModSurfacesAsSources", false);
   const showRevertAllButton$ = bindValue("replacementsolutions", "showRevertAllButton", false);
+  const showSurfaceBaseColorSettings$ = bindValue("replacementsolutions", "showSurfaceBaseColorSettings", false);
   const rulesJson$ = bindValue("replacementsolutions", "rulesJson", "[]");
   const areaRulesJson$ = bindValue("replacementsolutions", "areaRulesJson", "[]");
   const surfaceScalesJson$ = bindValue("replacementsolutions", "surfaceScalesJson", "{}");
@@ -147,6 +149,7 @@ const register = (moduleRegistry) => {
   const surfaceEdgeFadeEndsJson$ = bindValue("replacementsolutions", "surfaceEdgeFadeEndsJson", "{}");
   const surfaceEdgeNoisesJson$ = bindValue("replacementsolutions", "surfaceEdgeNoisesJson", "{}");
   const surfaceEdgeNoiseScalesJson$ = bindValue("replacementsolutions", "surfaceEdgeNoiseScalesJson", "{}");
+  const surfaceBaseColorsJson$ = bindValue("replacementsolutions", "surfaceBaseColorsJson", "{}");
   const surfaceScaleEditorOpen$ = bindValue("replacementsolutions", "surfaceScaleEditorOpen", false);
   const surfaceScaleSurfaceId$ = bindValue("replacementsolutions", "surfaceScaleSurfaceId", "");
   const surfaceScaleSurfaceName$ = bindValue("replacementsolutions", "surfaceScaleSurfaceName", "");
@@ -158,6 +161,10 @@ const register = (moduleRegistry) => {
   const surfaceEdgeFadeDefault$ = bindValue("replacementsolutions", "surfaceEdgeFadeDefault", 0);
   const surfaceEdgeNoiseDefault$ = bindValue("replacementsolutions", "surfaceEdgeNoiseDefault", 0);
   const surfaceEdgeNoiseScaleDefault$ = bindValue("replacementsolutions", "surfaceEdgeNoiseScaleDefault", 0.2);
+  const surfaceBaseColorHue$ = bindValue("replacementsolutions", "surfaceBaseColorHue", 0);
+  const surfaceBaseColorSaturation$ = bindValue("replacementsolutions", "surfaceBaseColorSaturation", 0);
+  const surfaceBaseColorBrightness$ = bindValue("replacementsolutions", "surfaceBaseColorBrightness", 1);
+  const surfaceBaseColorAlpha$ = bindValue("replacementsolutions", "surfaceBaseColorAlpha", 1);
   const surfaceScaleRevertVersion$ = bindValue("replacementsolutions", "surfaceScaleRevertVersion", 0);
   const surfaceScaleEditorX$ = bindValue("replacementsolutions", "surfaceScaleEditorX", -1);
   const surfaceScaleEditorY$ = bindValue("replacementsolutions", "surfaceScaleEditorY", -1);
@@ -175,7 +182,8 @@ const register = (moduleRegistry) => {
       Object.prototype.hasOwnProperty.call(parameters.edgeFades || {}, surfaceId) ||
       Object.prototype.hasOwnProperty.call(parameters.edgeFadeEnds || {}, surfaceId) ||
       Object.prototype.hasOwnProperty.call(parameters.edgeNoises || {}, surfaceId) ||
-      Object.prototype.hasOwnProperty.call(parameters.edgeNoiseScales || {}, surfaceId);
+      Object.prototype.hasOwnProperty.call(parameters.edgeNoiseScales || {}, surfaceId) ||
+      Object.prototype.hasOwnProperty.call(parameters.baseColors || {}, surfaceId);
   };
   const edgeNoiseClipPath = (percent) => {
     const strength = Math.max(0, Math.min(10, Number(percent) || 0)) / 10;
@@ -193,9 +201,29 @@ const register = (moduleRegistry) => {
     for (let i = segments - 1; i > 0; i--) points.push(`${Math.max(0, Math.min(100, noise(i, 4) * jitter))}% ${(i / segments) * 100}%`);
     return `polygon(${points.join(",")})`;
   };
+  const hsbaToCss = (hue, saturation, brightness, alpha) => {
+    const h = ((Number(hue) || 0) % 1 + 1) % 1;
+    const s = Math.max(0, Math.min(1, Number(saturation) || 0));
+    const v = Math.max(0, Math.min(1, Number(brightness) || 0));
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+    const rgb = [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i % 6];
+    return `rgba(${Math.round(rgb[0] * 255)},${Math.round(rgb[1] * 255)},${Math.round(rgb[2] * 255)},${Math.max(0, Math.min(1, Number(alpha) || 0))})`;
+  };
   const makeSurfacePreviewImage = (surface, appearancePreview = null) => {
     const image = surface.tooltipThumbnail || surface.thumbnail;
     let preview = h("img", { className: "atrSurfaceTooltipImage", src: image, alt: surface.name });
+    const tooltipColorOnly = appearancePreview &&
+      appearancePreview.scale == null && appearancePreview.edgeFadePercent == null && appearancePreview.edgeNoisePercent == null;
+    if (tooltipColorOnly) {
+      if (!appearancePreview.baseColorCss) return preview;
+      return h("div", { className: "atrSurfaceTooltipColorPreview" },
+        h("img", { className: "atrSurfaceTooltipImage", src: image, alt: surface.name }),
+        h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss } }));
+    }
     if (appearancePreview) {
       const scale = Math.max(1, Math.min(50, Number(appearancePreview.scale) || 1));
       const fade = Math.max(0, Math.min(10, Number(appearancePreview.edgeFadePercent) || 0)) / 10;
@@ -220,8 +248,8 @@ const register = (moduleRegistry) => {
             style: imageStyle,
           });
       preview = appearancePreview.applyScale === false
-        ? h("div", { className: "atrScaleDialogTextureImage" }, imageElement)
-        : h("div", { className: "atrScaleTexturePreview" }, imageElement);
+        ? h("div", { className: "atrScaleDialogTextureImage" }, imageElement, appearancePreview.baseColor || appearancePreview.baseColorCss ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss || hsbaToCss(appearancePreview.baseColor.h, appearancePreview.baseColor.s, appearancePreview.baseColor.b, appearancePreview.baseColor.a) } }) : null)
+        : h("div", { className: "atrScaleTexturePreview" }, imageElement, appearancePreview.baseColor || appearancePreview.baseColorCss ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss || hsbaToCss(appearancePreview.baseColor.h, appearancePreview.baseColor.s, appearancePreview.baseColor.b, appearancePreview.baseColor.a) } }) : null);
     }
 
     return preview;
@@ -236,10 +264,16 @@ const register = (moduleRegistry) => {
       h("span", { className: "atrSurfaceTooltipPath" }, surface.menuPath || "In-game asset"),
       makeSurfacePreviewImage(surface, appearancePreview));
   };
-  const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
+  const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize, appearancePreview = null) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
-  }, makeSurfaceTooltipContent(surface, includeGroup));
+  }, makeSurfaceTooltipContent(surface, includeGroup, appearancePreview));
+  const colorStringToCss = (value) => {
+    const parts = String(value || "").split(",").map(Number);
+    return parts.length === 4 && parts.every(Number.isFinite)
+      ? `rgba(${Math.round(parts[0] * 255)},${Math.round(parts[1] * 255)},${Math.round(parts[2] * 255)},${Math.max(0, Math.min(1, parts[3]))})`
+      : null;
+  };
 
   const makeSurfaceScaleDetails = (surface, appearancePreview) => h("div", { className: "atrScaleSurfaceInfo" },
     makeSurfaceTooltipContent(surface, true, { ...appearancePreview, applyScale: false }));
@@ -277,9 +311,9 @@ const register = (moduleRegistry) => {
           className: "atrRuleSurfaceIconFrame",
           onMouseDown: openScaleEditor,
           onContextMenu: (event) => event.preventDefault(),
-        }, icon, !sourceIsArea && hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
+        }, icon, colorStringToCss(surfaceParameters.baseColors?.[surface.id]) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) } }) : null, !sourceIsArea && hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
         return ui.Tooltip && !scaleEditorOpen
-          ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize), delayTime: 0, hideOnInteraction: false }, framedIcon)
+          ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) }), delayTime: 0, hideOnInteraction: false }, framedIcon)
           : h("span", { key: surface.id, title: `${surface.name} — ${surface.group || "In-game"}` }, framedIcon);
       });
       const editButton = createButton("Edit", () => openPickerOnce(side), {
@@ -372,6 +406,7 @@ const register = (moduleRegistry) => {
       edgeFadeEnds: readParameterMap(useValue(surfaceEdgeFadeEndsJson$)),
       edgeNoises: readParameterMap(useValue(surfaceEdgeNoisesJson$)),
       edgeNoiseScales: readParameterMap(useValue(surfaceEdgeNoiseScalesJson$)),
+      baseColors: readParameterMap(useValue(surfaceBaseColorsJson$)),
     };
     const collapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
     const savedX = useValue(surfacePickerX$);
@@ -599,9 +634,10 @@ const register = (moduleRegistry) => {
     };
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
-      const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize);
+      const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) });
       const tileContents = h(React.Fragment, null,
         h("img", { src: surface.thumbnail, alt: surface.name }),
+        colorStringToCss(surfaceParameters.baseColors?.[surface.id]) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) } }) : null,
         hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
       const handleScale = (event) => {
         event.preventDefault();
@@ -731,6 +767,7 @@ const register = (moduleRegistry) => {
       edgeFadeEnds: readParameterMap(useValue(surfaceEdgeFadeEndsJson$)),
       edgeNoises: readParameterMap(useValue(surfaceEdgeNoisesJson$)),
       edgeNoiseScales: readParameterMap(useValue(surfaceEdgeNoiseScalesJson$)),
+      baseColors: readParameterMap(useValue(surfaceBaseColorsJson$)),
     };
     const dialogRef = React.useRef(null);
     const rulesScrollRef = React.useRef(null);
@@ -1074,6 +1111,11 @@ const register = (moduleRegistry) => {
     const edgeFadeDefault = useValue(surfaceEdgeFadeDefault$);
     const edgeNoiseDefault = useValue(surfaceEdgeNoiseDefault$);
     const edgeNoiseScaleDefault = useValue(surfaceEdgeNoiseScaleDefault$);
+    const baseColorHue = useValue(surfaceBaseColorHue$);
+    const baseColorSaturation = useValue(surfaceBaseColorSaturation$);
+    const baseColorBrightness = useValue(surfaceBaseColorBrightness$);
+    const baseColorAlpha = useValue(surfaceBaseColorAlpha$);
+    const showSurfaceBaseColorSettings = useValue(showSurfaceBaseColorSettings$);
     const revertVersion = useValue(surfaceScaleRevertVersion$);
     const cursorX = useValue(surfaceScaleEditorX$);
     const cursorY = useValue(surfaceScaleEditorY$);
@@ -1095,6 +1137,7 @@ const register = (moduleRegistry) => {
     const previewScale = 1;
     const previewEdgeFade = Number(edgeFadePercent) || 0;
     const previewEdgeNoise = Number(edgeNoisePercent) || 0;
+    const previewBaseColor = { h: baseColorHue, s: baseColorSaturation, b: baseColorBrightness, a: baseColorAlpha };
     const close = () => trigger("replacementsolutions", "cancelSurfaceScale");
     const onChange = (value) => trigger("replacementsolutions", "setSurfaceScalePreview", String(Math.round(roundSliderDisplayValue(value) * 100)));
     const onScaleSliderChange = (...args) => {
@@ -1130,6 +1173,21 @@ const register = (moduleRegistry) => {
       setEdgeNoiseScalePosition(numericValue);
       trigger("replacementsolutions", "setSurfaceEdgeNoiseScalePreview", String(appliedValue));
     };
+    const [baseColorHuePosition, setBaseColorHuePosition] = React.useState(Number.isFinite(Number(baseColorHue)) ? Number(baseColorHue) : 0);
+    const [baseColorSaturationPosition, setBaseColorSaturationPosition] = React.useState(Number.isFinite(Number(baseColorSaturation)) ? Number(baseColorSaturation) : 0);
+    const [baseColorBrightnessPosition, setBaseColorBrightnessPosition] = React.useState(Number(baseColorBrightness) || 1);
+    const [baseColorAlphaPosition, setBaseColorAlphaPosition] = React.useState(Number.isFinite(Number(baseColorAlpha)) ? Number(baseColorAlpha) : 1);
+    const onBaseColorChange = (setter, kind, ...args) => {
+      const value = Math.max(0, Math.min(1, readSliderDirectValue(...args)));
+      setter(value);
+      const values = {
+        hue: kind === "hue" ? value : baseColorHuePosition,
+        saturation: kind === "saturation" ? value : baseColorSaturationPosition,
+        brightness: kind === "brightness" ? value : baseColorBrightnessPosition,
+        alpha: kind === "alpha" ? value : baseColorAlphaPosition,
+      };
+      trigger("replacementsolutions", "setSurfaceBaseColorPreview", `${values.hue},${values.saturation},${values.brightness},${values.alpha}`);
+    };
     const currentScale = Math.max(1, Math.min(50, Number(hundredths) / 100 || 1));
     const selectedScaleIndex = currentScale;
     const [sliderPosition, setSliderPosition] = React.useState(selectedScaleIndex);
@@ -1142,6 +1200,10 @@ const register = (moduleRegistry) => {
         setEdgeFadePosition(Number(edgeFadePercent) || 0);
         setEdgeNoisePosition(Number(edgeNoisePercent) || 0);
         setEdgeNoiseScalePosition(Number.isFinite(Number(edgeNoiseScale)) ? Number(edgeNoiseScale) : 0.2);
+        setBaseColorHuePosition(Number.isFinite(Number(baseColorHue)) ? Number(baseColorHue) : 0);
+        setBaseColorSaturationPosition(Number.isFinite(Number(baseColorSaturation)) ? Number(baseColorSaturation) : 0);
+        setBaseColorBrightnessPosition(Number(baseColorBrightness) || 1);
+        setBaseColorAlphaPosition(Number.isFinite(Number(baseColorAlpha)) ? Number(baseColorAlpha) : 1);
       }
     }, [open, surfaceId]);
     React.useEffect(() => {
@@ -1150,6 +1212,10 @@ const register = (moduleRegistry) => {
       setEdgeFadePosition(Number(edgeFadePercent) || 0);
       setEdgeNoisePosition(Number(edgeNoisePercent) || 0);
       setEdgeNoiseScalePosition(Number.isFinite(Number(edgeNoiseScale)) ? Number(edgeNoiseScale) : 0.2);
+      setBaseColorHuePosition(Number.isFinite(Number(baseColorHue)) ? Number(baseColorHue) : 0);
+      setBaseColorSaturationPosition(Number.isFinite(Number(baseColorSaturation)) ? Number(baseColorSaturation) : 0);
+      setBaseColorBrightnessPosition(Number(baseColorBrightness) || 1);
+      setBaseColorAlphaPosition(Number.isFinite(Number(baseColorAlpha)) ? Number(baseColorAlpha) : 1);
     }, [revertVersion]);
     const panelWidth = Math.min(900, window.innerWidth - 32);
     const panelHeight = Math.min(720, window.innerHeight - 32);
@@ -1264,17 +1330,51 @@ const register = (moduleRegistry) => {
       },
       onDoubleClick: resetScaleSlider,
     }, slider);
+    const createColorSlider = (label, value, setter, kind) => {
+      const colorSliderStyle = {
+        "--backgroundColor": "transparent",
+        "--sliderRangeColor": "transparent",
+        "--sliderRangeColorFocused": "transparent",
+        "--sliderThumbColor": "rgba(235,237,239,1)",
+        "--sliderThumbColorFocused": "rgba(255,255,255,1)",
+        "--trackSize": "8rem",
+        "--focusedColor": "transparent",
+      };
+      // The vanilla slider paints an opaque base behind its internal track.  For
+      // colour controls use a native range input so the custom track remains the
+      // only painted surface and the thumb still reflects the current value.
+      const element = h("input", { className: `atrScaleSlider atrColorSlider atrColorSlider-${kind}`, type: "range", min: 0, max: 1, step: 0.01, value, style: colorSliderStyle, onChange: (event) => onBaseColorChange(setter, kind, Number(event.target.value)) });
+      const trackStyle = kind === "alpha" ? { "--atr-alpha-color": hsbaToCss(baseColorHuePosition, baseColorSaturationPosition, baseColorBrightnessPosition, 1) } : undefined;
+      return createSliderControl(label, h("div", { className: `atrColorSliderVisual atrColorSliderVisual-${kind}`, style: trackStyle }, element), Number(value).toFixed(2));
+    };
     const createSliderControl = (label, sliderElement, displayValue) => h("div", { className: "atrScaleControlRow" },
       h("span", { className: "atrScaleControlLabel" }, label),
       h("div", { className: "atrScaleSliderHost" }, sliderElement),
       h("strong", { className: "atrScaleCurrentValue" }, displayValue));
     const scaleDisplayValue = roundSliderDisplayValue(sliderPosition).toFixed(2);
     const content = h("div", { className: "atrScaleDialogBody", style: { fontSize: scaledFontSize } },
+      showSurfaceBaseColorSettings && GameColorPicker ? h(GameColorPicker, {
+        focusKey: FocusDisabled,
+        color: { h: baseColorHuePosition, s: baseColorSaturationPosition, v: baseColorBrightnessPosition, a: baseColorAlphaPosition },
+        alpha: true,
+        colorWheel: false,
+        sliderTextInput: false,
+        hexInput: false,
+        mode: "Hsv",
+        onChange: (color) => {
+          setBaseColorHuePosition(color.h);
+          setBaseColorSaturationPosition(color.s);
+          setBaseColorBrightnessPosition(color.v);
+          setBaseColorAlphaPosition(color.a);
+          trigger("replacementsolutions", "setSurfaceBaseColorPreview", `${color.h},${color.s},${color.v},${color.a}`);
+        },
+      }) : null,
       h("div", { className: "atrScaleSurfaceDetails" },
         makeSurfaceScaleDetails(surface, {
             scale: previewScale,
             edgeFadePercent: previewEdgeFade,
             edgeNoisePercent: previewEdgeNoise,
+            baseColor: previewBaseColor,
           })),
       createSliderControl("Scale", scaleSlider, scaleDisplayValue),
       createSliderControl("Edge fade", edgeFadeSlider, `${roundSliderDisplayValue(edgeFadePosition).toFixed(2)}`),

@@ -87,8 +87,13 @@
 .atrPickerResizeCorner{position:absolute;bottom:0;z-index:100;width:24rem;height:24rem;pointer-events:auto}
 .atrSurfaceTile{position:relative}
 .atrSurfaceTile>img:first-child{display:block;width:100%;height:100%}
-.atrSurfaceTooltip{width:320rem;max-width:520rem}
-.atrSurfaceTooltipImage{display:block;width:100%;max-height:360rem;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem}
+.atrSurfaceTooltip{display:flex;flex-direction:column;gap:3rem;width:320rem;max-width:520rem;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.atrSurfaceTooltip strong{color:rgba(255,255,255,.98)}
+.atrSurfaceTooltip span{color:rgba(255,255,255,.7)}
+.atrSurfaceTooltipImage{display:block;width:100%;height:auto;max-width:100%;max-height:360rem;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem;object-fit:contain}
+.atrSurfaceTooltipColorPreview{position:relative;width:100%;overflow:hidden}
+.atrSurfaceTooltipColorPreview>.atrSurfaceTooltipImage{position:relative;z-index:1}
+.atrSurfaceTooltipColorPreview>.atrBaseColorOverlay{z-index:2}
 .atrScaleBadge{position:absolute;top:1rem;right:2rem;z-index:2;padding:0;color:#ef5367;font-size:14rem;font-weight:800;line-height:1;white-space:nowrap;text-shadow:0 1rem 2rem #000;pointer-events:none}
 .atrRuleSurfaceIconFrame>.atrScaleBadge{top:0;right:1rem;font-size:10rem;padding:0}
 .atrScaleDialogPositioner{position:absolute;width:900rem;min-width:0;min-height:0;max-height:calc(100vh - 16rem);z-index:1200;pointer-events:none}
@@ -104,6 +109,7 @@
 .atrScaleSurfaceInfo .atrScaleDialogTextureImage{display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;overflow:hidden;background:rgba(0,0,0,.18)}
 .atrScaleTexturePreview{position:relative;display:block;width:100%;height:0;min-width:0;min-height:120rem;flex:1 1 0;align-self:stretch;overflow:hidden;border:1rem solid rgba(180,210,224,.35);border-radius:3rem;background-color:#273a47;background-image:linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%),linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%);background-position:0 0,8rem 8rem;background-size:16rem 16rem}
 .atrScaleTexturePreviewImage{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;transform-origin:top left}
+.atrBaseColorOverlay{position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply}
 .atrScaleControlRow{display:flex;flex:0 0 auto;align-items:center;gap:16rem;min-width:0}
 .atrScaleGameSlider{width:100%;min-width:0;flex:1 1 auto}
 .atrScaleControlLabel{flex:0 0 10em;width:10em;min-width:10em;color:rgba(255,255,255,.82);font-weight:600;white-space:nowrap}
@@ -111,6 +117,47 @@
 .atrScaleSlider{width:100%;margin:4rem 0;accent-color:#38c896}
 .atrScaleSliderHost{display:flex;flex:1 1 auto;min-width:0;align-items:center}
 .atrScaleSliderHost>*{width:100%}
+.atrColorSlider{border-radius:4rem!important}
+.atrColorSlider-hue{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)!important}
+.atrColorSlider-saturation{background:linear-gradient(90deg,#777,#f00)!important}
+.atrColorSlider-brightness{background:linear-gradient(90deg,#000,#fff)!important}
+.atrColorSlider-alpha{background-color:#777!important;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%)!important;background-size:8rem 8rem!important;background-position:0 0,0 4rem,4rem -4rem,-4rem 0!important}
+.atrColorSlider-hue::-webkit-slider-runnable-track{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)!important}
+.atrColorSlider-saturation::-webkit-slider-runnable-track{background:linear-gradient(90deg,#777,#f00)!important}
+.atrColorSlider-brightness::-webkit-slider-runnable-track{background:linear-gradient(90deg,#000,#fff)!important}
+.atrColorSlider-alpha::-webkit-slider-runnable-track{background-color:#777!important;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%)!important;background-size:8rem 8rem!important}
+.atrColorSlider-hue::-moz-range-track{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)!important}
+.atrColorSlider-saturation::-moz-range-track{background:linear-gradient(90deg,#777,#f00)!important}
+.atrColorSlider-brightness::-moz-range-track{background:linear-gradient(90deg,#000,#fff)!important}
+.atrColorSlider-alpha::-moz-range-track{background-color:#777!important;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%)!important;background-size:8rem 8rem!important}
+.atrColorSlider-hue .track,.atrColorSlider-hue [class*="track"],.atrColorSlider-hue [class*="Track"]{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)!important}
+.atrColorSlider-saturation .track,.atrColorSlider-saturation [class*="track"],.atrColorSlider-saturation [class*="Track"]{background:linear-gradient(90deg,#777,#f00)!important}
+.atrColorSlider-brightness .track,.atrColorSlider-brightness [class*="track"],.atrColorSlider-brightness [class*="Track"]{background:linear-gradient(90deg,#000,#fff)!important}
+.atrColorSlider-alpha .track,.atrColorSlider-alpha [class*="track"],.atrColorSlider-alpha [class*="Track"]{background-color:#777!important;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%)!important;background-size:8rem 8rem!important}
+.atrColorSlider-hue [class*="sliderTrack"],.atrColorSlider-hue [class*="SliderTrack"],.atrColorSlider-hue [class*="slider-track"],.atrColorSlider-hue [class*="Slider-track"]{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)!important}
+.atrColorSlider-saturation [class*="sliderTrack"],.atrColorSlider-saturation [class*="SliderTrack"],.atrColorSlider-saturation [class*="slider-track"],.atrColorSlider-saturation [class*="Slider-track"]{background:linear-gradient(90deg,#777,#f00)!important}
+.atrColorSlider-brightness [class*="sliderTrack"],.atrColorSlider-brightness [class*="SliderTrack"],.atrColorSlider-brightness [class*="slider-track"],.atrColorSlider-brightness [class*="Slider-track"]{background:linear-gradient(90deg,#000,#fff)!important}
+.atrColorSlider-alpha [class*="sliderTrack"],.atrColorSlider-alpha [class*="SliderTrack"],.atrColorSlider-alpha [class*="slider-track"],.atrColorSlider-alpha [class*="Slider-track"]{background-color:#777!important;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%)!important;background-size:8rem 8rem!important}
+.atrColorSlider::-webkit-slider-thumb{appearance:none;width:18rem;height:18rem;border:2rem solid #fff;border-radius:50%;background:#273a47;box-shadow:0 0 0 1rem rgba(0,0,0,.45);cursor:pointer}
+.atrColorSlider::-moz-range-thumb{width:14rem;height:14rem;border:2rem solid #fff;border-radius:50%;background:#273a47;box-shadow:0 0 0 1rem rgba(0,0,0,.45);cursor:pointer}
+.atrColorSlider [class*="thumb"],.atrColorSlider [class*="Thumb"]{box-shadow:0 0 0 1rem rgba(0,0,0,.45)!important}
+.atrColorSlider,.atrColorSlider input[type="range"]{height:18rem!important;min-height:18rem!important;padding:0!important;box-sizing:border-box}
+.atrColorSlider input[type="range"]{width:100%!important;background:transparent!important}
+.atrColorSlider input[type="range"]::-webkit-slider-runnable-track{height:18rem!important;border-radius:9rem!important}
+.atrColorSlider input[type="range"]::-moz-range-track{height:18rem!important;border-radius:9rem!important}
+.atrColorSlider [role="slider"],.atrColorSlider [class*="thumb"],.atrColorSlider [class*="Thumb"]{z-index:2!important}
+.atrColorSlider [class*="track"],.atrColorSlider [class*="Track"],.atrColorSlider [class*="sliderTrack"],.atrColorSlider [class*="SliderTrack"]{width:100%!important;min-width:100%!important;height:18rem!important;min-height:18rem!important;border-radius:9rem!important;box-sizing:border-box!important}
+.atrColorSliderVisual{position:relative;width:100%;height:18rem;min-height:18rem;flex:1 1 auto;overflow:visible;border-radius:9rem}
+.atrColorSliderVisual::before{content:"";position:absolute;inset:0;z-index:0;height:18rem;border-radius:9rem;pointer-events:none}
+.atrColorSliderVisual-hue::before{background:linear-gradient(90deg,#f00 0%,#ff0 16%,#0f0 33%,#0ff 50%,#00f 66%,#f0f 83%,#f00 100%)}
+.atrColorSliderVisual-saturation::before{background:linear-gradient(90deg,#777,#f00)}
+.atrColorSliderVisual-brightness::before{background:linear-gradient(90deg,#000,#fff)}
+.atrColorSliderVisual-alpha::before{background-image:linear-gradient(90deg,transparent,var(--atr-alpha-color,#fff)),linear-gradient(45deg,#aaa 25%,transparent 25%,transparent 75%,#aaa 75%),linear-gradient(-45deg,#aaa 25%,transparent 25%,transparent 75%,#aaa 75%);background-position:0 0,0 0,4rem 4rem;background-size:100% 100%,8rem 8rem,8rem 8rem}
+.atrColorSliderVisual>.atrColorSlider{position:relative;z-index:1;width:100%!important;height:18rem!important;background:transparent!important;background-image:none!important}
+.atrColorSliderVisual>.atrColorSlider input[type="range"]{background:transparent!important;background-image:none!important}
+.atrColorSliderVisual>.atrColorSlider::-webkit-slider-runnable-track,.atrColorSliderVisual>.atrColorSlider input[type="range"]::-webkit-slider-runnable-track{background:transparent!important;background-image:none!important}
+.atrColorSliderVisual>.atrColorSlider::-moz-range-track,.atrColorSliderVisual>.atrColorSlider input[type="range"]::-moz-range-track{background:transparent!important;background-image:none!important}
+.atrColorSliderVisual>.atrColorSlider [class*="track"],.atrColorSliderVisual>.atrColorSlider [class*="Track"],.atrColorSliderVisual>.atrColorSlider [class*="sliderTrack"],.atrColorSliderVisual>.atrColorSlider [class*="SliderTrack"]{background:transparent!important;background-image:none!important}
 .atrScaleDialogTextureImage{display:block;width:100%;height:auto;max-height:none;overflow:hidden;object-fit:contain;background:rgba(0,0,0,.18);border-radius:3rem}
 .atrSurfaceFadeVertical{overflow:hidden}
 .atrScaleDialogTextureImage>.atrScaleTexturePreviewImage{position:relative;inset:auto;width:100%;height:100%;object-fit:contain}
