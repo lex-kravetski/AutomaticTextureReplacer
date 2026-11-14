@@ -84,6 +84,44 @@ const register = (moduleRegistry) => {
   const GameCheckbox = moduleRegistry.get("game-ui/common/input/toggle/checkbox/checkbox.tsx", "Checkbox");
   const GameSlider = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "Slider");
   const useSliderStepTransformer = moduleRegistry.get("game-ui/common/input/slider/slider.tsx", "useStepTransformer");
+
+  // Gameface slider versions have used both onChange(value) and
+  // onChange(event, value). Normalize both forms before updating bindings.
+  const readSliderNumber = (...args) => {
+    const inspect = (candidate, depth = 0) => {
+      if (depth > 3 || candidate == null) return null;
+      if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
+      if (typeof candidate === "string" && candidate.trim() !== "") {
+        const parsed = Number(candidate);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      if (typeof candidate !== "object") return null;
+      for (const key of ["value", "detail", "target", "currentTarget"]) {
+        const result = inspect(candidate[key], depth + 1);
+        if (result != null) return result;
+      }
+      return null;
+    };
+    // Some game versions call onChange(event, value). Prefer the last
+    // argument so an event's stale `target.value` cannot mask the new value.
+    for (let index = args.length - 1; index >= 0; index--) {
+      const result = inspect(args[index]);
+      if (result != null) return result;
+    }
+    return 0;
+  };
+  const readSliderRangeValue = (maximum, ...args) => {
+    const raw = readSliderNumber(...args);
+    // Keep the native scale slider's normalized position conversion. The
+    // appearance sliders below intentionally use the raw value directly.
+    return GameSlider && raw >= 0 && raw <= 1 ? raw * maximum : raw;
+  };
+  const readSliderDirectValue = (...args) => readSliderNumber(...args);
+  const roundSliderDisplayValue = (value) => {
+    const numeric = Number(value || 0);
+    const step = numeric <= 1 ? 0.05 : 0.5;
+    return Math.round(numeric / step) * step;
+  };
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("replacementsolutions", "surfaceCatalog", "[]");
   const areaCatalog$ = bindValue("replacementsolutions", "areaCatalog", "[]");
@@ -105,30 +143,109 @@ const register = (moduleRegistry) => {
   const rulesJson$ = bindValue("replacementsolutions", "rulesJson", "[]");
   const areaRulesJson$ = bindValue("replacementsolutions", "areaRulesJson", "[]");
   const surfaceScalesJson$ = bindValue("replacementsolutions", "surfaceScalesJson", "{}");
+  const surfaceEdgeFadesJson$ = bindValue("replacementsolutions", "surfaceEdgeFadesJson", "{}");
+  const surfaceEdgeFadeEndsJson$ = bindValue("replacementsolutions", "surfaceEdgeFadeEndsJson", "{}");
+  const surfaceEdgeNoisesJson$ = bindValue("replacementsolutions", "surfaceEdgeNoisesJson", "{}");
+  const surfaceEdgeNoiseScalesJson$ = bindValue("replacementsolutions", "surfaceEdgeNoiseScalesJson", "{}");
   const surfaceScaleEditorOpen$ = bindValue("replacementsolutions", "surfaceScaleEditorOpen", false);
   const surfaceScaleSurfaceId$ = bindValue("replacementsolutions", "surfaceScaleSurfaceId", "");
   const surfaceScaleSurfaceName$ = bindValue("replacementsolutions", "surfaceScaleSurfaceName", "");
-  const surfaceScaleTenths$ = bindValue("replacementsolutions", "surfaceScaleTenths", 10);
+  const surfaceScaleHundredths$ = bindValue("replacementsolutions", "surfaceScaleHundredths", 100);
+  const surfaceEdgeFadePercent$ = bindValue("replacementsolutions", "surfaceEdgeFadePercent", 0);
+  const surfaceEdgeFadeEndPercent$ = bindValue("replacementsolutions", "surfaceEdgeFadeEndPercent", 0);
+  const surfaceEdgeNoisePercent$ = bindValue("replacementsolutions", "surfaceEdgeNoisePercent", 0);
+  const surfaceEdgeNoiseScale$ = bindValue("replacementsolutions", "surfaceEdgeNoiseScale", 0.2);
+  const surfaceEdgeFadeDefault$ = bindValue("replacementsolutions", "surfaceEdgeFadeDefault", 0);
+  const surfaceEdgeNoiseDefault$ = bindValue("replacementsolutions", "surfaceEdgeNoiseDefault", 0);
+  const surfaceEdgeNoiseScaleDefault$ = bindValue("replacementsolutions", "surfaceEdgeNoiseScaleDefault", 0.2);
+  const surfaceScaleRevertVersion$ = bindValue("replacementsolutions", "surfaceScaleRevertVersion", 0);
   const surfaceScaleEditorX$ = bindValue("replacementsolutions", "surfaceScaleEditorX", -1);
   const surfaceScaleEditorY$ = bindValue("replacementsolutions", "surfaceScaleEditorY", -1);
   const surfaceScaleEditorOrigin$ = bindValue("replacementsolutions", "surfaceScaleEditorOrigin", "picker");
   const readSurfaceScales = (json) => {
     try { return JSON.parse(json || "{}"); } catch (_) { return {}; }
   };
-  const scaleBadge = (scale) => scale && Math.abs(Number(scale) - 1) > 0.001
-    ? h("span", { className: "atrScaleBadge" }, `Scale: ${Number(scale).toFixed(1)}`)
+  const scaleBadge = (hasCustomParameters) => hasCustomParameters
+    ? h("span", { className: "atrScaleBadge" }, "*")
     : null;
-  const makeSurfaceTooltipContent = (surface, includeGroup) => h(React.Fragment, null,
-    h("strong", null, surface.name),
-    includeGroup ? h("span", null, surface.group || "In-game") : null,
-    h("span", { className: "atrSurfaceTooltipPath" }, surface.menuPath || "In-game asset"),
-    h("img", { className: "atrSurfaceTooltipImage", src: surface.tooltipThumbnail || surface.thumbnail, alt: surface.name }));
+  const readParameterMap = (json) => readSurfaceScales(json);
+  const hasCustomSurfaceParameters = (surfaceId, parameters) => {
+    if (!surfaceId || !parameters) return false;
+    return Object.prototype.hasOwnProperty.call(parameters.scales || {}, surfaceId) ||
+      Object.prototype.hasOwnProperty.call(parameters.edgeFades || {}, surfaceId) ||
+      Object.prototype.hasOwnProperty.call(parameters.edgeFadeEnds || {}, surfaceId) ||
+      Object.prototype.hasOwnProperty.call(parameters.edgeNoises || {}, surfaceId) ||
+      Object.prototype.hasOwnProperty.call(parameters.edgeNoiseScales || {}, surfaceId);
+  };
+  const edgeNoiseClipPath = (percent) => {
+    const strength = Math.max(0, Math.min(10, Number(percent) || 0)) / 10;
+    if (strength <= 0) return "none";
+    const points = [];
+    const segments = 12;
+    const jitter = strength * 3.2;
+    const noise = (index, salt) => {
+      const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+      return (value - Math.floor(value)) * 2 - 1;
+    };
+    for (let i = 0; i <= segments; i++) points.push(`${(i / segments) * 100}% ${Math.max(0, Math.min(100, noise(i, 1) * jitter))}%`);
+    for (let i = 1; i <= segments; i++) points.push(`${Math.max(0, Math.min(100, 100 + noise(i, 2) * jitter))}% ${(i / segments) * 100}%`);
+    for (let i = segments - 1; i >= 0; i--) points.push(`${(i / segments) * 100}% ${Math.max(0, Math.min(100, 100 + noise(i, 3) * jitter))}%`);
+    for (let i = segments - 1; i > 0; i--) points.push(`${Math.max(0, Math.min(100, noise(i, 4) * jitter))}% ${(i / segments) * 100}%`);
+    return `polygon(${points.join(",")})`;
+  };
+  const makeSurfacePreviewImage = (surface, appearancePreview = null) => {
+    const image = surface.tooltipThumbnail || surface.thumbnail;
+    let preview = h("img", { className: "atrSurfaceTooltipImage", src: image, alt: surface.name });
+    if (appearancePreview) {
+      const scale = Math.max(1, Math.min(50, Number(appearancePreview.scale) || 1));
+      const fade = Math.max(0, Math.min(10, Number(appearancePreview.edgeFadePercent) || 0)) / 10;
+      const edgeNoise = Math.max(0, Math.min(10, Number(appearancePreview.edgeNoisePercent) || 0));
+      const horizontalMask = "linear-gradient(to right, transparent 0%, #000 " + fade + "%, #000 calc(100% - " + fade + "%), transparent 100%)";
+      const verticalMask = "linear-gradient(to bottom, transparent 0%, #000 " + fade + "%, #000 calc(100% - " + fade + "%), transparent 100%)";
+      const imageStyle = {
+        transform: appearancePreview.applyScale === false ? "none" : "scale(" + scale + ")",
+        clipPath: edgeNoiseClipPath(edgeNoise),
+        maskImage: fade > 0 ? horizontalMask : "none",
+        WebkitMaskImage: fade > 0 ? horizontalMask : "none",
+      };
+      const imageElement = h("img", {
+            className: "atrScaleTexturePreviewImage",
+            src: image,
+            alt: surface.name,
+            onError: (event) => {
+              if (surface.thumbnail && event.currentTarget.src !== surface.thumbnail) {
+                event.currentTarget.src = surface.thumbnail;
+              }
+            },
+            style: imageStyle,
+          });
+      preview = appearancePreview.applyScale === false
+        ? h("div", { className: "atrScaleDialogTextureImage" }, imageElement)
+        : h("div", { className: "atrScaleTexturePreview" }, imageElement);
+    }
+
+    return preview;
+  };
+
+  // Shared body only: the tooltip and the scale dialog each provide their own
+  // container, so this function never creates a floating Tooltip component.
+  const makeSurfaceTooltipContent = (surface, includeGroup, appearancePreview = null) => {
+    return h(React.Fragment, null,
+      h("strong", null, surface.name),
+      includeGroup ? h("span", null, surface.group || "In-game") : null,
+      h("span", { className: "atrSurfaceTooltipPath" }, surface.menuPath || "In-game asset"),
+      makeSurfacePreviewImage(surface, appearancePreview));
+  };
   const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
   }, makeSurfaceTooltipContent(surface, includeGroup));
 
-  const RuleRow = React.memo(({ rule, ruleKind, deleteRule, setRuleEnabled, openSurfacePicker, surfaceCatalogById, areaCatalogById, surfaceScales, scaledFontSize, rowIndex }) => {
+  const makeSurfaceScaleDetails = (surface, appearancePreview) => h("div", { className: "atrScaleSurfaceInfo" },
+    makeSurfaceTooltipContent(surface, true, { ...appearancePreview, applyScale: false }));
+
+  const RuleRow = React.memo(({ rule, ruleKind, deleteRule, setRuleEnabled, openSurfacePicker, surfaceCatalogById, areaCatalogById, surfaceParameters, scaledFontSize, rowIndex }) => {
+    const scaleEditorOpen = useValue(surfaceScaleEditorOpen$);
     const lastPickerOpenAt = React.useRef(0);
     const openPickerOnce = (side) => {
       const now = Date.now();
@@ -160,8 +277,8 @@ const register = (moduleRegistry) => {
           className: "atrRuleSurfaceIconFrame",
           onMouseDown: openScaleEditor,
           onContextMenu: (event) => event.preventDefault(),
-        }, icon, !sourceIsArea ? scaleBadge(surfaceScales[surface.id]) : null);
-        return ui.Tooltip
+        }, icon, !sourceIsArea && hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
+        return ui.Tooltip && !scaleEditorOpen
           ? h(ui.Tooltip, { key: surface.id, tooltip: makeSurfaceTooltip(surface, true, scaledFontSize), delayTime: 0, hideOnInteraction: false }, framedIcon)
           : h("span", { key: surface.id, title: `${surface.name} — ${surface.group || "In-game"}` }, framedIcon);
       });
@@ -249,7 +366,13 @@ const register = (moduleRegistry) => {
     const open = useValue(surfacePickerOpen$);
     const scaleEditorOpen = useValue(surfaceScaleEditorOpen$);
     const scaleEditorOrigin = useValue(surfaceScaleEditorOrigin$);
-    const surfaceScales = readSurfaceScales(useValue(surfaceScalesJson$));
+    const surfaceParameters = {
+      scales: readParameterMap(useValue(surfaceScalesJson$)),
+      edgeFades: readParameterMap(useValue(surfaceEdgeFadesJson$)),
+      edgeFadeEnds: readParameterMap(useValue(surfaceEdgeFadeEndsJson$)),
+      edgeNoises: readParameterMap(useValue(surfaceEdgeNoisesJson$)),
+      edgeNoiseScales: readParameterMap(useValue(surfaceEdgeNoiseScalesJson$)),
+    };
     const collapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
     const savedX = useValue(surfacePickerX$);
     const savedY = useValue(surfacePickerY$);
@@ -479,7 +602,7 @@ const register = (moduleRegistry) => {
       const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize);
       const tileContents = h(React.Fragment, null,
         h("img", { src: surface.thumbnail, alt: surface.name }),
-        scaleBadge(surfaceScales[surface.id]));
+        hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
       const handleScale = (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -513,7 +636,7 @@ const register = (moduleRegistry) => {
           title: surface.name,
         },
           tileContents);
-      return ui.Tooltip
+      return ui.Tooltip && !scaleEditorOpen
         ? h(ui.Tooltip, { key: surface.id, tooltip, delayTime: 0, hideOnInteraction: false }, tile)
         : h("div", { key: surface.id, title: surface.name }, tile);
     };
@@ -602,7 +725,13 @@ const register = (moduleRegistry) => {
     const areaRulesJson = useValue(areaRulesJson$);
     const catalogJson = useValue(surfaceCatalog$);
     const areaCatalogJson = useValue(areaCatalog$);
-    const surfaceScales = readSurfaceScales(useValue(surfaceScalesJson$));
+    const surfaceParameters = {
+      scales: readParameterMap(useValue(surfaceScalesJson$)),
+      edgeFades: readParameterMap(useValue(surfaceEdgeFadesJson$)),
+      edgeFadeEnds: readParameterMap(useValue(surfaceEdgeFadeEndsJson$)),
+      edgeNoises: readParameterMap(useValue(surfaceEdgeNoisesJson$)),
+      edgeNoiseScales: readParameterMap(useValue(surfaceEdgeNoiseScalesJson$)),
+    };
     const dialogRef = React.useRef(null);
     const rulesScrollRef = React.useRef(null);
     const nextRuleId = React.useRef(1);
@@ -802,7 +931,7 @@ const register = (moduleRegistry) => {
       openSurfacePicker,
       surfaceCatalogById: catalogById,
       areaCatalogById,
-      surfaceScales,
+      surfaceParameters,
       scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
     }));
 
@@ -938,14 +1067,21 @@ const register = (moduleRegistry) => {
     const open = useValue(surfaceScaleEditorOpen$);
     const surfaceId = useValue(surfaceScaleSurfaceId$);
     const surfaceName = useValue(surfaceScaleSurfaceName$);
-    const tenths = useValue(surfaceScaleTenths$);
+    const hundredths = useValue(surfaceScaleHundredths$);
+    const edgeFadePercent = useValue(surfaceEdgeFadePercent$);
+    const edgeNoisePercent = useValue(surfaceEdgeNoisePercent$);
+    const edgeNoiseScale = useValue(surfaceEdgeNoiseScale$);
+    const edgeFadeDefault = useValue(surfaceEdgeFadeDefault$);
+    const edgeNoiseDefault = useValue(surfaceEdgeNoiseDefault$);
+    const edgeNoiseScaleDefault = useValue(surfaceEdgeNoiseScaleDefault$);
+    const revertVersion = useValue(surfaceScaleRevertVersion$);
     const cursorX = useValue(surfaceScaleEditorX$);
     const cursorY = useValue(surfaceScaleEditorY$);
     const catalogJson = useValue(surfaceCatalog$);
     const fontSize = useValue(dialogFontSize$);
     const scaledFontSize = Math.round(13 * fontSize) / 100 + "rem";
-    const stepTransformer = useSliderStepTransformer ? useSliderStepTransformer(0.1) : undefined;
     const [dragPosition, setDragPosition] = React.useState(null);
+    const dialogRef = React.useRef(null);
     const catalog = React.useMemo(() => {
       try { return JSON.parse(catalogJson || "[]"); } catch (_) { return []; }
     }, [catalogJson]);
@@ -956,13 +1092,69 @@ const register = (moduleRegistry) => {
       menuPath: "In-game asset",
       thumbnail: "",
     };
+    const previewScale = 1;
+    const previewEdgeFade = Number(edgeFadePercent) || 0;
+    const previewEdgeNoise = Number(edgeNoisePercent) || 0;
     const close = () => trigger("replacementsolutions", "cancelSurfaceScale");
-    const onChange = (value) => trigger("replacementsolutions", "setSurfaceScalePreview", String(Math.round(value * 10)));
-    const value = (Math.max(1, Math.min(200, Number(tenths) || 10)) / 10).toFixed(1);
+    const onChange = (value) => trigger("replacementsolutions", "setSurfaceScalePreview", String(Math.round(roundSliderDisplayValue(value) * 100)));
+    const onScaleSliderChange = (...args) => {
+      const rawValue = readSliderNumber(...args);
+      const numericPosition = Math.max(1, Math.min(50, readSliderDirectValue(...args)));
+      console.info("[Replacement Solutions] Slider value: Scale", { raw: rawValue, position: numericPosition, maximum: 50 });
+      setSliderPosition(numericPosition);
+      onChange(numericPosition);
+    };
+    const resetScaleSlider = () => {
+      setSliderPosition(1);
+      onChange(1);
+    };
+    const onEdgeFadeChange = (...args) => {
+      const rawValue = readSliderNumber(...args);
+      const numericValue = Math.max(0, Math.min(10, readSliderDirectValue(...args)));
+      const appliedValue = roundSliderDisplayValue(numericValue);
+      console.info("[Replacement Solutions] Slider value: Edge fade", { raw: rawValue, applied: appliedValue, maximum: 10 });
+      setEdgeFadePosition(numericValue);
+      trigger("replacementsolutions", "setSurfaceEdgeFadePreview", String(appliedValue));
+    };
+    const onEdgeNoiseChange = (...args) => {
+      const rawValue = readSliderNumber(...args);
+      const numericValue = Math.max(0, Math.min(10, readSliderDirectValue(...args)));
+      const appliedValue = roundSliderDisplayValue(numericValue);
+      console.info("[Replacement Solutions] Slider value: Edge noise", { raw: rawValue, applied: appliedValue, maximum: 10 });
+      setEdgeNoisePosition(numericValue);
+      trigger("replacementsolutions", "setSurfaceEdgeNoisePreview", String(appliedValue));
+    };
+    const onEdgeNoiseScaleChange = (...args) => {
+      const numericValue = Math.max(0.01, Math.min(10, readSliderDirectValue(...args)));
+      const appliedValue = roundSliderDisplayValue(numericValue);
+      setEdgeNoiseScalePosition(numericValue);
+      trigger("replacementsolutions", "setSurfaceEdgeNoiseScalePreview", String(appliedValue));
+    };
+    const currentScale = Math.max(1, Math.min(50, Number(hundredths) / 100 || 1));
+    const selectedScaleIndex = currentScale;
+    const [sliderPosition, setSliderPosition] = React.useState(selectedScaleIndex);
+    const [edgeFadePosition, setEdgeFadePosition] = React.useState(Number(edgeFadePercent) || 0);
+    const [edgeNoisePosition, setEdgeNoisePosition] = React.useState(Number(edgeNoisePercent) || 0);
+    const [edgeNoiseScalePosition, setEdgeNoiseScalePosition] = React.useState(Number.isFinite(Number(edgeNoiseScale)) ? Number(edgeNoiseScale) : 0.2);
+    React.useEffect(() => {
+      if (open) {
+        setSliderPosition(selectedScaleIndex);
+        setEdgeFadePosition(Number(edgeFadePercent) || 0);
+        setEdgeNoisePosition(Number(edgeNoisePercent) || 0);
+        setEdgeNoiseScalePosition(Number.isFinite(Number(edgeNoiseScale)) ? Number(edgeNoiseScale) : 0.2);
+      }
+    }, [open, surfaceId]);
+    React.useEffect(() => {
+      if (!open || !revertVersion) return;
+      setSliderPosition(currentScale);
+      setEdgeFadePosition(Number(edgeFadePercent) || 0);
+      setEdgeNoisePosition(Number(edgeNoisePercent) || 0);
+      setEdgeNoiseScalePosition(Number.isFinite(Number(edgeNoiseScale)) ? Number(edgeNoiseScale) : 0.2);
+    }, [revertVersion]);
     const panelWidth = Math.min(900, window.innerWidth - 32);
     const panelHeight = Math.min(720, window.innerHeight - 32);
     const left = cursorX < 0
-      ? Math.round((window.innerWidth - panelWidth) / 2)
+      ? 8
       : cursorX + 14 + panelWidth <= window.innerWidth - 8 ? cursorX + 14 : Math.max(8, cursorX - panelWidth - 14);
     const top = cursorY < 0
       ? Math.round((window.innerHeight - panelHeight) / 2)
@@ -970,6 +1162,35 @@ const register = (moduleRegistry) => {
     React.useEffect(() => {
       if (open) setDragPosition({ x: left, y: top });
     }, [open, cursorX, cursorY]);
+    React.useEffect(() => {
+      if (!open) return undefined;
+      const clampToViewport = () => {
+        const rect = dialogRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const maxX = Math.max(8, window.innerWidth - rect.width - 8);
+        const maxY = Math.max(8, window.innerHeight - rect.height - 8);
+        setDragPosition((current) => {
+          const candidate = current || { x: left, y: top };
+          const x = Math.max(8, Math.min(maxX, candidate.x));
+          const y = Math.max(8, Math.min(maxY, candidate.y));
+          return x === candidate.x && y === candidate.y ? candidate : { x, y };
+        });
+      };
+      const frame = requestAnimationFrame(() => {
+        clampToViewport();
+        requestAnimationFrame(clampToViewport);
+      });
+      const observer = typeof ResizeObserver !== "undefined" && dialogRef.current
+        ? new ResizeObserver(clampToViewport)
+        : null;
+      observer?.observe(dialogRef.current);
+      window.addEventListener("resize", clampToViewport);
+      return () => {
+        cancelAnimationFrame(frame);
+        observer?.disconnect();
+        window.removeEventListener("resize", clampToViewport);
+      };
+    }, [open, cursorX, cursorY, panelWidth]);
     const position = dragPosition || { x: left, y: top };
     const beginDrag = (event) => {
       if (event.button !== 0) return;
@@ -979,12 +1200,14 @@ const register = (moduleRegistry) => {
       const startX = event.clientX;
       const startY = event.clientY;
       const move = (e) => setDragPosition({
-        x: Math.max(0, Math.min(window.innerWidth - panelWidth, rect.left + e.clientX - startX)),
-        y: Math.max(0, Math.min(window.innerHeight - panelHeight, rect.top + e.clientY - startY)),
+        x: Math.max(8, Math.min(window.innerWidth - rect.width - 8, rect.left + e.clientX - startX)),
+        y: Math.max(8, Math.min(window.innerHeight - rect.height - 8, rect.top + e.clientY - startY)),
       });
       const end = () => {
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", end);
+        const current = dialogRef.current?.getBoundingClientRect();
+        if (current) trigger("replacementsolutions", "setSurfaceScaleEditorPosition", `${Math.round(current.left)},${Math.round(current.top)}`);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -993,25 +1216,75 @@ const register = (moduleRegistry) => {
       left: position.x + "px",
       top: position.y + "px",
       width: panelWidth + "px",
-      height: panelHeight + "px",
+      height: "auto",
       display: open ? "block" : "none",
     };
     const slider = GameSlider
       ? h(GameSlider, {
         focusKey: FocusDisabled,
-        value: Number(tenths) / 10,
-        start: 0.1,
-        end: 20,
-        valueTransformer: stepTransformer,
-        onChange,
-        onDoubleClick: () => onChange(1),
+        value: sliderPosition,
+        start: 1,
+        end: 50,
+        step: 0.01,
+        onChange: onScaleSliderChange,
+        onDoubleClick: resetScaleSlider,
         className: "atrScaleGameSlider",
       })
-      : h("input", { className: "atrScaleSlider", type: "range", min: 1, max: 200, step: 1, value: Number(tenths) || 10, onChange: (event) => onChange(Number(event.target.value) / 10), onDoubleClick: () => onChange(1) });
+      : h("input", { className: "atrScaleSlider", type: "range", min: 1, max: 50, step: 0.01, value: sliderPosition, onChange: (event) => onScaleSliderChange(Number(event.target.value)), onDoubleClick: resetScaleSlider });
+    const edgeFadeSlider = GameSlider
+      ? h(GameSlider, {
+        focusKey: FocusDisabled,
+        value: edgeFadePosition,
+        start: 0,
+        end: 10,
+        step: 0.01,
+        onChange: onEdgeFadeChange,
+        onDoubleClick: () => { setEdgeFadePosition(Number(edgeFadeDefault) || 0); onEdgeFadeChange(Number(edgeFadeDefault) || 0); },
+        className: "atrScaleGameSlider",
+      })
+      : h("input", { className: "atrScaleSlider", type: "range", min: 0, max: 10, step: 0.01, value: edgeFadePosition, onChange: (event) => onEdgeFadeChange(Number(event.target.value)), onDoubleClick: () => { setEdgeFadePosition(Number(edgeFadeDefault) || 0); onEdgeFadeChange(Number(edgeFadeDefault) || 0); } });
+    const edgeNoiseSlider = GameSlider
+      ? h(GameSlider, {
+        focusKey: FocusDisabled,
+        value: edgeNoisePosition,
+        start: 0,
+        end: 10,
+        step: 0.01,
+        onChange: onEdgeNoiseChange,
+        onDoubleClick: () => { setEdgeNoisePosition(Number(edgeNoiseDefault) || 0); onEdgeNoiseChange(Number(edgeNoiseDefault) || 0); },
+        className: "atrScaleGameSlider",
+      })
+      : h("input", { className: "atrScaleSlider", type: "range", min: 0, max: 10, step: 0.01, value: edgeNoisePosition, onChange: (event) => onEdgeNoiseChange(Number(event.target.value)), onDoubleClick: () => { setEdgeNoisePosition(Number(edgeNoiseDefault) || 0); onEdgeNoiseChange(Number(edgeNoiseDefault) || 0); } });
+    const edgeNoiseScaleSlider = GameSlider
+      ? h(GameSlider, { focusKey: FocusDisabled, value: edgeNoiseScalePosition, start: 0.01, end: 10, step: 0.05, onChange: onEdgeNoiseScaleChange, onDoubleClick: () => { const value = Number.isFinite(Number(edgeNoiseScaleDefault)) ? Number(edgeNoiseScaleDefault) : 0.2; setEdgeNoiseScalePosition(value); onEdgeNoiseScaleChange(value); }, className: "atrScaleGameSlider" })
+      : h("input", { className: "atrScaleSlider", type: "range", min: 0.01, max: 10, step: 0.05, value: edgeNoiseScalePosition, onChange: (event) => onEdgeNoiseScaleChange(Number(event.target.value)), onDoubleClick: () => { const value = Number.isFinite(Number(edgeNoiseScaleDefault)) ? Number(edgeNoiseScaleDefault) : 0.2; setEdgeNoiseScalePosition(value); onEdgeNoiseScaleChange(value); } });
+    const scaleSlider = h("div", {
+      onMouseDown: (event) => {
+        if (event.detail >= 2) resetScaleSlider();
+      },
+      onDoubleClick: resetScaleSlider,
+    }, slider);
+    const createSliderControl = (label, sliderElement, displayValue) => h("div", { className: "atrScaleControlRow" },
+      h("span", { className: "atrScaleControlLabel" }, label),
+      h("div", { className: "atrScaleSliderHost" }, sliderElement),
+      h("strong", { className: "atrScaleCurrentValue" }, displayValue));
+    const scaleDisplayValue = roundSliderDisplayValue(sliderPosition).toFixed(2);
     const content = h("div", { className: "atrScaleDialogBody", style: { fontSize: scaledFontSize } },
-      h("div", { className: "atrScaleSurfaceDetails" }, h("div", { className: "atrSurfaceTooltip" }, makeSurfaceTooltipContent(surface, true))),
-      h("div", { className: "atrScaleControlRow" }, slider, h("strong", { className: "atrScaleCurrentValue" }, `Scale: ${value}`)),
+      h("div", { className: "atrScaleSurfaceDetails" },
+        makeSurfaceScaleDetails(surface, {
+            scale: previewScale,
+            edgeFadePercent: previewEdgeFade,
+            edgeNoisePercent: previewEdgeNoise,
+          })),
+      createSliderControl("Scale", scaleSlider, scaleDisplayValue),
+      createSliderControl("Edge fade", edgeFadeSlider, `${roundSliderDisplayValue(edgeFadePosition).toFixed(2)}`),
+      createSliderControl("Edge noise", edgeNoiseSlider, `${roundSliderDisplayValue(edgeNoisePosition).toFixed(2)}`),
+      createSliderControl("Noise scale", edgeNoiseScaleSlider, `${roundSliderDisplayValue(edgeNoiseScalePosition || 0.1).toFixed(2)}`),
       h("div", { className: "atrScaleDialogFooter" },
+        createTintedPrimaryButton("Revert", () => trigger("replacementsolutions", "revertSurfaceScale"), {
+          fontSize: scaledFontSize,
+          tone: "red",
+        }),
         createTintedPrimaryButton("OK", () => trigger("replacementsolutions", "applySurfaceScale"), {
           fontSize: scaledFontSize,
           tone: "green",
@@ -1020,8 +1293,8 @@ const register = (moduleRegistry) => {
           fontSize: scaledFontSize,
           tone: "blue",
         })));
-    const header = h("div", { className: "atrDialogHeader atrScaleDialogHeader", onMouseDownCapture: beginDrag }, "Scale");
-    return h("div", { className: "atrDialogPositioner atrScaleDialogPositioner", style: positionerStyle, "aria-hidden": !open },
+    const header = h("div", { className: "atrDialogHeader atrScaleDialogHeader", onMouseDownCapture: beginDrag }, "Surface Parameters");
+    return h("div", { className: "atrDialogPositioner atrScaleDialogPositioner", style: positionerStyle, ref: dialogRef, "aria-hidden": !open },
       ui.Panel
         ? h(ui.Panel, {
           className: "atrScaleDialogPanel",

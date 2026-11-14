@@ -69,6 +69,12 @@ namespace AutomaticTextureReplacer
         public int SurfacePickerHeight { get; set; } = -1;
 
         [SettingsUIHidden]
+        public int SurfaceParametersX { get; set; } = -1;
+
+        [SettingsUIHidden]
+        public int SurfaceParametersY { get; set; } = -1;
+
+        [SettingsUIHidden]
         public bool SurfacePickerOpen { get; set; }
 
         [SettingsUIHidden]
@@ -86,6 +92,19 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public string SurfaceScalesJson { get; set; } = "{}";
 
+        [SettingsUIHidden]
+        public string SurfaceEdgeFadesJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
+        public string SurfaceEdgeFadeEndsJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
+        public string SurfaceEdgeNoisesJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
+        public string SurfaceEdgeNoiseScalesJson { get; set; } = "{}";
+
+
         public override void SetDefaults()
         {
             DialogOpen = false;
@@ -97,12 +116,18 @@ namespace AutomaticTextureReplacer
             SurfacePickerY = -1;
             SurfacePickerWidth = -1;
             SurfacePickerHeight = -1;
+            SurfaceParametersX = -1;
+            SurfaceParametersY = -1;
             SurfacePickerOpen = false;
             SurfacePickerContextJson = "";
             SurfacePickerCollapsedGroupsJson = "{}";
             RulesJson = "[]";
             AreaRulesJson = "[]";
             SurfaceScalesJson = "{}";
+            SurfaceEdgeFadesJson = "{}";
+            SurfaceEdgeFadeEndsJson = "{}";
+            SurfaceEdgeNoisesJson = "{}";
+            SurfaceEdgeNoiseScalesJson = "{}";
             DialogFontSize = 100;
             ShowInGameSurfacesAsTargets = false;
             ShowSpecialIndustrySurfacesAsTargets = false;

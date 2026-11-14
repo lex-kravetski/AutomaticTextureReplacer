@@ -339,11 +339,17 @@ namespace AutomaticTextureReplacer
                     // GenerateAreasSystem restores the prefab from the original area when
                     // m_Original is set, so changing that definition would not take effect.
                     // Restrict this feature to newly created areas belonging to new buildings.
+                    bool isManualSurfaceCreation = m_ToolSystem.activeTool == m_AreaToolSystem &&
+                        !isIndustryExtractionDefinition && !isExtractorAreaPrefab;
+                    string replacementScope = Mod.Settings?.ReplacementScope ?? "assets";
+                    bool scopeAllowsConstruction = replacementScope == "all" ||
+                        (!isManualSurfaceCreation && replacementScope == "assets") ||
+                        (isManualSurfaceCreation && replacementScope == "hand-drawn-surfaces");
                     if (definition.m_Original != Entity.Null ||
                         definition.m_Prefab == Entity.Null ||
                         !isSurfacePrefab ||
                         isIndustryExtractionDefinition ||
-                        (m_ToolSystem.activeTool == m_AreaToolSystem && !isIndustryExtractionDefinition && !isExtractorAreaPrefab) ||
+                        !scopeAllowsConstruction ||
                         !m_TargetsBySource.TryGetValue(definition.m_Prefab, out List<Entity> targets) ||
                         targets.Count == 0)
                     {

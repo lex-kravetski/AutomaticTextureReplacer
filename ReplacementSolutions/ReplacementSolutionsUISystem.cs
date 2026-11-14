@@ -51,10 +51,23 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_RulesJson;
         private ValueBinding<string> m_AreaRulesJson;
         private ValueBinding<string> m_SurfaceScalesJson;
+        private ValueBinding<string> m_SurfaceEdgeFadesJson;
+        private ValueBinding<string> m_SurfaceEdgeFadeEndsJson;
+        private ValueBinding<string> m_SurfaceEdgeNoisesJson;
+        private ValueBinding<string> m_SurfaceEdgeNoiseScalesJson;
         private ValueBinding<bool> m_SurfaceScaleEditorOpen;
         private ValueBinding<string> m_SurfaceScaleSurfaceId;
         private ValueBinding<string> m_SurfaceScaleSurfaceName;
-        private ValueBinding<int> m_SurfaceScaleTenths;
+        private ValueBinding<int> m_SurfaceScaleHundredths;
+        private ValueBinding<float> m_SurfaceEdgeFadePercent;
+        private ValueBinding<float> m_SurfaceEdgeFadeEndPercent;
+        private ValueBinding<float> m_SurfaceEdgeNoisePercent;
+        private ValueBinding<float> m_SurfaceEdgeNoiseScale;
+        private ValueBinding<float> m_SurfaceEdgeFadeDefault;
+        private ValueBinding<float> m_SurfaceEdgeNoiseDefault;
+        private ValueBinding<float> m_SurfaceEdgeNoiseScaleDefault;
+        private ValueBinding<int> m_SurfaceScaleRevertVersion;
+        private int m_SurfaceScaleRevertCounter;
         private ValueBinding<int> m_SurfaceScaleEditorX;
         private ValueBinding<int> m_SurfaceScaleEditorY;
         private ValueBinding<string> m_SurfaceScaleEditorOrigin;
@@ -78,9 +91,19 @@ namespace AutomaticTextureReplacer
         private Task<List<CustomTextureFile>> m_CustomTextureScanTask;
         private List<CustomTextureFile> m_CustomTextureFiles;
         private int m_CustomTextureFileIndex;
+        // Custom surfaces are registered in the same root-folder/path order as
+        // the picker catalog; monotonically increasing menu priorities preserve
+        // that order in the game's Tiles / Surfaces menu.
+        private int m_CustomSurfaceMenuPriority;
         private readonly Dictionary<string, CustomSurfaceInfo> m_CustomSurfacesById = new Dictionary<string, CustomSurfaceInfo>(StringComparer.Ordinal);
         private readonly Dictionary<string, float> m_SurfaceScaleValues = new Dictionary<string, float>(StringComparer.Ordinal);
         private readonly Dictionary<string, float> m_SurfaceScaleBaseValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceEdgeFadeValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceEdgeFadeEndValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float2> m_SurfaceEdgeFadeBaseValues = new Dictionary<string, float2>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceEdgeNoiseValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> m_SurfaceEdgeNoiseScaleValues = new Dictionary<string, float>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float2> m_SurfaceEdgeNoiseBaseValues = new Dictionary<string, float2>(StringComparer.Ordinal);
         private readonly HashSet<string> m_SurfaceScaleMaterialCloneIds = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> m_SurfaceScaleMaterialUnavailableLogged = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> m_RestoredSurfaceScaleIds = new HashSet<string>(StringComparer.Ordinal);
@@ -88,6 +111,8 @@ namespace AutomaticTextureReplacer
         private float m_ActiveSurfaceScaleBefore;
         private float m_ActiveSurfaceScaleSavedValue;
         private bool m_ActiveSurfaceScaleHadSavedValue;
+        private float m_ActiveSurfaceScaleDefault;
+        private float m_ActiveSurfaceEdgeNoiseDefault;
         private bool m_SurfaceScaleEditorIsOpen;
         private bool m_RestorePickerOnNextToolbarOpen;
         private readonly Dictionary<int, SurfacePreview> m_SurfacePreviewCache = new Dictionary<int, SurfacePreview>();
@@ -146,6 +171,7 @@ namespace AutomaticTextureReplacer
         private static readonly int s_EdgeNormalRangeProperty = Shader.PropertyToID("colossal_EdgeNormalRange");
         private static readonly int s_EdgeNoiseProperty = Shader.PropertyToID("colossal_EdgeNoise");
         private bool m_SurfaceCatalogPublished;
+        private bool m_SurfaceDefaultsCaptured;
 
         protected override void OnCreate()
         {
@@ -203,12 +229,32 @@ namespace AutomaticTextureReplacer
             LoadSurfaceScaleValues(settings?.SurfaceScalesJson);
             AddBinding(m_SurfaceScalesJson = new ValueBinding<string>(
                 "replacementsolutions", "surfaceScalesJson", SerializeSurfaceScaleValues()));
+            LoadSurfaceEdgeFadeValues(settings?.SurfaceEdgeFadesJson);
+            AddBinding(m_SurfaceEdgeFadesJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceEdgeFadesJson", SerializeSurfaceEdgeFadeValues()));
+            LoadSurfaceEdgeFadeEndValues(settings?.SurfaceEdgeFadeEndsJson);
+            AddBinding(m_SurfaceEdgeFadeEndsJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceEdgeFadeEndsJson", SerializeSurfaceEdgeFadeEndValues()));
+            LoadSurfaceEdgeNoiseValues(settings?.SurfaceEdgeNoisesJson);
+            AddBinding(m_SurfaceEdgeNoisesJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceEdgeNoisesJson", SerializeSurfaceEdgeNoiseValues()));
+            LoadSurfaceEdgeNoiseScaleValues(settings?.SurfaceEdgeNoiseScalesJson);
+            AddBinding(m_SurfaceEdgeNoiseScalesJson = new ValueBinding<string>(
+                "replacementsolutions", "surfaceEdgeNoiseScalesJson", SerializeSurfaceEdgeNoiseScaleValues()));
             AddBinding(m_SurfaceScaleEditorOpen = new ValueBinding<bool>("replacementsolutions", "surfaceScaleEditorOpen", false));
             AddBinding(m_SurfaceScaleSurfaceId = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceId", ""));
             AddBinding(m_SurfaceScaleSurfaceName = new ValueBinding<string>("replacementsolutions", "surfaceScaleSurfaceName", ""));
-            AddBinding(m_SurfaceScaleTenths = new ValueBinding<int>("replacementsolutions", "surfaceScaleTenths", 10));
-            AddBinding(m_SurfaceScaleEditorX = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorX", -1));
-            AddBinding(m_SurfaceScaleEditorY = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorY", -1));
+            AddBinding(m_SurfaceScaleHundredths = new ValueBinding<int>("replacementsolutions", "surfaceScaleHundredths", 100));
+            AddBinding(m_SurfaceEdgeFadePercent = new ValueBinding<float>("replacementsolutions", "surfaceEdgeFadePercent", 0f));
+            AddBinding(m_SurfaceEdgeFadeEndPercent = new ValueBinding<float>("replacementsolutions", "surfaceEdgeFadeEndPercent", 0f));
+            AddBinding(m_SurfaceEdgeNoisePercent = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoisePercent", 0f));
+            AddBinding(m_SurfaceEdgeNoiseScale = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoiseScale", 0.2f));
+            AddBinding(m_SurfaceEdgeFadeDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeFadeDefault", 0f));
+            AddBinding(m_SurfaceEdgeNoiseDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoiseDefault", 0f));
+            AddBinding(m_SurfaceEdgeNoiseScaleDefault = new ValueBinding<float>("replacementsolutions", "surfaceEdgeNoiseScaleDefault", 0.2f));
+            AddBinding(m_SurfaceScaleRevertVersion = new ValueBinding<int>("replacementsolutions", "surfaceScaleRevertVersion", 0));
+            AddBinding(m_SurfaceScaleEditorX = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorX", settings?.SurfaceParametersX ?? -1));
+            AddBinding(m_SurfaceScaleEditorY = new ValueBinding<int>("replacementsolutions", "surfaceScaleEditorY", settings?.SurfaceParametersY ?? -1));
             AddBinding(m_SurfaceScaleEditorOrigin = new ValueBinding<string>("replacementsolutions", "surfaceScaleEditorOrigin", "picker"));
 
             m_SurfaceQuery = GetEntityQuery(
@@ -249,7 +295,13 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<string>("replacementsolutions", "openSurfacePicker", OpenSurfacePicker));
             AddBinding(new TriggerBinding("replacementsolutions", "closeSurfacePicker", CloseSurfacePicker));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "openSurfaceScaleEditor", OpenSurfaceScaleEditor));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceScaleEditorPosition", SetSurfaceScaleEditorPosition));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceScalePreview", SetSurfaceScalePreview));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeFadePreview", SetSurfaceEdgeFadePreview));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeFadeEndPreview", SetSurfaceEdgeFadeEndPreview));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeNoisePreview", SetSurfaceEdgeNoisePreview));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfaceEdgeNoiseScalePreview", SetSurfaceEdgeNoiseScalePreview));
+            AddBinding(new TriggerBinding("replacementsolutions", "revertSurfaceScale", RevertSurfaceScale));
             AddBinding(new TriggerBinding("replacementsolutions", "applySurfaceScale", ApplySurfaceScale));
             AddBinding(new TriggerBinding("replacementsolutions", "cancelSurfaceScale", CancelSurfaceScale));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "saveRules", SetRulesJson));
@@ -281,6 +333,11 @@ namespace AutomaticTextureReplacer
                  string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
             bool prefabsReady = prefabSystem != null && !m_SurfaceQuery.IsEmptyIgnoreFilter;
+            if (prefabsReady && !m_SurfaceDefaultsCaptured)
+            {
+                CaptureSurfaceDefaults(prefabSystem);
+                m_SurfaceDefaultsCaptured = true;
+            }
             if (mapReady && prefabsReady)
             {
                 RestoreConfiguredSurfaceScales(prefabSystem);
@@ -553,9 +610,118 @@ namespace AutomaticTextureReplacer
             return JSON.Dump(m_SurfaceScaleValues);
         }
 
+        private void LoadSurfaceEdgeFadeValues(string json)
+        {
+            m_SurfaceEdgeFadeValues.Clear();
+            try
+            {
+                Dictionary<string, float> values = JSON.MakeInto<Dictionary<string, float>>(JSON.Load(json ?? "{}"));
+                if (values == null)
+                {
+                    return;
+                }
+
+                foreach (KeyValuePair<string, float> value in values)
+                {
+                    if (!string.IsNullOrWhiteSpace(value.Key))
+                    {
+                        float percent = Mathf.Clamp(value.Value, 0f, 10f);
+                        if (percent > 0f)
+                        {
+                            m_SurfaceEdgeFadeValues[value.Key] = percent;
+                        }
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface edge fade values");
+            }
+        }
+
+        private string SerializeSurfaceEdgeFadeValues()
+        {
+            return JSON.Dump(m_SurfaceEdgeFadeValues);
+        }
+
+        private void LoadSurfaceEdgeFadeEndValues(string json)
+        {
+            m_SurfaceEdgeFadeEndValues.Clear();
+            try
+            {
+                Dictionary<string, float> values = JSON.MakeInto<Dictionary<string, float>>(JSON.Load(json ?? "{}"));
+                if (values == null) return;
+                foreach (KeyValuePair<string, float> value in values)
+                    if (!string.IsNullOrWhiteSpace(value.Key)) m_SurfaceEdgeFadeEndValues[value.Key] = Mathf.Clamp(value.Value, 0f, 100f);
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface edge fade end values");
+            }
+        }
+
+        private string SerializeSurfaceEdgeFadeEndValues()
+        {
+            return JSON.Dump(m_SurfaceEdgeFadeEndValues);
+        }
+
+        private void LoadSurfaceEdgeNoiseValues(string json)
+        {
+            m_SurfaceEdgeNoiseValues.Clear();
+            try
+            {
+                Dictionary<string, float> values = JSON.MakeInto<Dictionary<string, float>>(JSON.Load(json ?? "{}"));
+                if (values == null) return;
+                foreach (KeyValuePair<string, float> value in values)
+                {
+                    if (!string.IsNullOrWhiteSpace(value.Key))
+                    {
+                        m_SurfaceEdgeNoiseValues[value.Key] = Mathf.Clamp(value.Value, 0f, 10f);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface edge noise values");
+            }
+        }
+
+        private string SerializeSurfaceEdgeNoiseValues()
+        {
+            return JSON.Dump(m_SurfaceEdgeNoiseValues);
+        }
+
+        private void LoadSurfaceEdgeNoiseScaleValues(string json)
+        {
+            m_SurfaceEdgeNoiseScaleValues.Clear();
+            try
+            {
+                Dictionary<string, float> values = JSON.MakeInto<Dictionary<string, float>>(JSON.Load(json ?? "{}"));
+                if (values == null) return;
+                foreach (KeyValuePair<string, float> value in values)
+                {
+                    if (!string.IsNullOrWhiteSpace(value.Key))
+                        m_SurfaceEdgeNoiseScaleValues[value.Key] = Mathf.Clamp(value.Value, 0.01f, 10f);
+                }
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not load saved surface edge noise scale values");
+            }
+        }
+
+        private string SerializeSurfaceEdgeNoiseScaleValues()
+        {
+            return JSON.Dump(m_SurfaceEdgeNoiseScaleValues);
+        }
+
+        private static readonly float[] s_SurfaceScaleStops = Enumerable.Range(0, 39)
+            .Select(index => Mathf.Round((0.1f + index * 0.05f) * 100f) / 100f)
+            .ToArray();
+
         private static float ClampSurfaceScale(float scale)
         {
-            return Mathf.Clamp(Mathf.Round(scale * 10f) / 10f, 0.1f, 20f);
+            return Mathf.Clamp(scale, 1f, 50f);
         }
 
         private void OpenSurfaceScaleEditor(string request)
@@ -565,12 +731,8 @@ namespace AutomaticTextureReplacer
             int lastComma = request?.LastIndexOf(',') ?? -1;
             int yComma = lastComma > 0 ? request.LastIndexOf(',', lastComma - 1) : -1;
             int xComma = yComma > 0 ? request.LastIndexOf(',', yComma - 1) : -1;
-            if (xComma > 0 &&
-                int.TryParse(request.Substring(xComma + 1, yComma - xComma - 1), out int cursorX) &&
-                int.TryParse(request.Substring(yComma + 1, lastComma - yComma - 1), out int cursorY))
+            if (xComma > 0)
             {
-                m_SurfaceScaleEditorX.Update(cursorX);
-                m_SurfaceScaleEditorY.Update(cursorY);
                 origin = request.Substring(lastComma + 1) == "main" ? "main" : "picker";
                 surfaceId = request.Substring(0, xComma);
             }
@@ -583,31 +745,152 @@ namespace AutomaticTextureReplacer
 
             m_ActiveSurfaceScaleId = surfaceId;
             m_ActiveSurfaceScaleHadSavedValue = m_SurfaceScaleValues.TryGetValue(surfaceId, out m_ActiveSurfaceScaleSavedValue);
-            m_ActiveSurfaceScaleBefore = m_ActiveSurfaceScaleHadSavedValue ? m_ActiveSurfaceScaleSavedValue : 1f;
+            float defaultUvScale = m_SurfaceScaleBaseValues.TryGetValue(surfaceId, out float capturedUvScale)
+                ? capturedUvScale
+                : renderedArea.m_UVScale;
+            m_ActiveSurfaceScaleBefore = m_ActiveSurfaceScaleHadSavedValue
+                ? m_ActiveSurfaceScaleSavedValue
+                : ClampSurfaceScale(Mathf.Abs(defaultUvScale) > 0.0001f ? 1f / defaultUvScale : 1f);
+            m_ActiveSurfaceScaleDefault = ClampSurfaceScale(Mathf.Abs(defaultUvScale) > 0.0001f ? 1f / defaultUvScale : 1f);
             m_ActiveSurfaceScaleCurrent = m_ActiveSurfaceScaleBefore;
+            m_ActiveSurfaceEdgeFadeHadSavedValue = m_SurfaceEdgeFadeValues.TryGetValue(surfaceId, out m_ActiveSurfaceEdgeFadeSavedValue);
+            float2 defaultEdgeFade = m_SurfaceEdgeFadeBaseValues.TryGetValue(surfaceId, out float2 capturedEdgeFade)
+                ? capturedEdgeFade
+                : renderedArea.m_EdgeFadeRange;
+            m_ActiveSurfaceEdgeFadeBefore = m_ActiveSurfaceEdgeFadeHadSavedValue
+                ? m_ActiveSurfaceEdgeFadeSavedValue
+                : 0f;
+            m_ActiveSurfaceEdgeFadeCurrent = m_ActiveSurfaceEdgeFadeBefore;
+            m_ActiveSurfaceEdgeFadeEndHadSavedValue = m_SurfaceEdgeFadeEndValues.TryGetValue(surfaceId, out m_ActiveSurfaceEdgeFadeEndSavedValue);
+            m_ActiveSurfaceEdgeFadeEndBefore = m_ActiveSurfaceEdgeFadeEndHadSavedValue
+                ? m_ActiveSurfaceEdgeFadeEndSavedValue
+                : defaultEdgeFade.y;
+            m_ActiveSurfaceEdgeFadeEndCurrent = m_ActiveSurfaceEdgeFadeEndBefore;
+            m_ActiveSurfaceEdgeNoiseHadSavedValue = m_SurfaceEdgeNoiseValues.TryGetValue(surfaceId, out m_ActiveSurfaceEdgeNoiseSavedValue);
+            float2 defaultEdgeNoise = m_SurfaceEdgeNoiseBaseValues.TryGetValue(surfaceId, out float2 capturedEdgeNoise)
+                ? capturedEdgeNoise
+                : renderedArea.m_EdgeNoise;
+            // Edge noise is previewed from the prefab's default value. The
+            // persisted custom value is intentionally not used to initialize
+            // this editor control.
+            m_ActiveSurfaceEdgeNoiseBefore = defaultEdgeNoise.x;
+            m_ActiveSurfaceEdgeNoiseCurrent = m_ActiveSurfaceEdgeNoiseBefore;
+            m_ActiveSurfaceEdgeNoiseDefault = m_ActiveSurfaceEdgeNoiseBefore;
+            m_ActiveSurfaceEdgeNoiseScaleHadSavedValue = m_SurfaceEdgeNoiseScaleValues.TryGetValue(surfaceId, out m_ActiveSurfaceEdgeNoiseScaleSavedValue);
+            m_ActiveSurfaceEdgeNoiseScaleBefore = m_ActiveSurfaceEdgeNoiseScaleHadSavedValue
+                ? m_ActiveSurfaceEdgeNoiseScaleSavedValue
+                : Mathf.Max(0.01f, defaultEdgeNoise.y);
+            m_ActiveSurfaceEdgeNoiseScaleDefault = Mathf.Max(0.01f, defaultEdgeNoise.y);
+            m_ActiveSurfaceEdgeNoiseScaleCurrent = m_ActiveSurfaceEdgeNoiseScaleBefore;
             m_SurfaceScaleSurfaceId.Update(surfaceId);
             m_SurfaceScaleSurfaceName.Update(prefab.name ?? surfaceId);
             m_SurfaceScaleEditorOrigin.Update(origin);
-            m_SurfaceScaleTenths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 10f));
+            m_SurfaceScaleHundredths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 100f));
+            m_SurfaceEdgeFadePercent.Update(m_ActiveSurfaceEdgeFadeCurrent);
+            m_SurfaceEdgeFadeEndPercent.Update(m_ActiveSurfaceEdgeFadeEndCurrent);
+            m_SurfaceEdgeNoisePercent.Update(m_ActiveSurfaceEdgeNoiseCurrent);
+            m_SurfaceEdgeNoiseScale.Update(m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            // Zero is the UI sentinel for the prefab's default fade pair.
+            m_SurfaceEdgeFadeDefault.Update(0f);
+            m_SurfaceEdgeNoiseDefault.Update(defaultEdgeNoise.x);
+            m_SurfaceEdgeNoiseScaleDefault.Update(m_ActiveSurfaceEdgeNoiseScaleDefault);
             m_SurfaceScaleEditorIsOpen = true;
             m_SurfaceScaleEditorOpen.Update(true);
         }
 
+        private void SetSurfaceScaleEditorPosition(string value)
+        {
+            string[] parts = (value ?? string.Empty).Split(',');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out int x) || !int.TryParse(parts[1], out int y)) return;
+            m_SurfaceScaleEditorX.Update(x);
+            m_SurfaceScaleEditorY.Update(y);
+            if (Mod.Settings != null)
+            {
+                Mod.Settings.SurfaceParametersX = x;
+                Mod.Settings.SurfaceParametersY = y;
+                Mod.Settings.ApplyAndSave();
+            }
+        }
+
         private float m_ActiveSurfaceScaleCurrent = 1f;
+        private float m_ActiveSurfaceEdgeFadeBefore;
+        private float m_ActiveSurfaceEdgeFadeSavedValue;
+        private float m_ActiveSurfaceEdgeFadeCurrent;
+        private bool m_ActiveSurfaceEdgeFadeHadSavedValue;
+        private float m_ActiveSurfaceEdgeFadeEndBefore;
+        private float m_ActiveSurfaceEdgeFadeEndSavedValue;
+        private float m_ActiveSurfaceEdgeFadeEndCurrent;
+        private bool m_ActiveSurfaceEdgeFadeEndHadSavedValue;
+        private float m_ActiveSurfaceEdgeNoiseBefore;
+        private float m_ActiveSurfaceEdgeNoiseSavedValue;
+        private float m_ActiveSurfaceEdgeNoiseCurrent;
+        private bool m_ActiveSurfaceEdgeNoiseHadSavedValue;
+        private float m_ActiveSurfaceEdgeNoiseScaleBefore;
+        private float m_ActiveSurfaceEdgeNoiseScaleDefault;
+        private float m_ActiveSurfaceEdgeNoiseScaleSavedValue;
+        private float m_ActiveSurfaceEdgeNoiseScaleCurrent;
+        private bool m_ActiveSurfaceEdgeNoiseScaleHadSavedValue;
 
         private void SetSurfaceScalePreview(string value)
         {
-            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !int.TryParse(value, out int tenths))
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !int.TryParse(value, out int hundredths))
             {
                 return;
             }
 
-            tenths = Mathf.Clamp(tenths, 1, 200);
-            m_ActiveSurfaceScaleCurrent = tenths / 10f;
+            hundredths = Mathf.Clamp(hundredths, 100, 5000);
+            Mod.Log.InfoFormat("Surface slider input: kind='Scale', raw='{0}', parsedHundredths={1}", value, hundredths);
+            m_ActiveSurfaceScaleCurrent = ClampSurfaceScale(hundredths / 100f);
             SetSurfaceScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent);
             ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
-            m_SurfaceScaleTenths.Update(tenths);
+            m_SurfaceScaleHundredths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 100f));
             m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+        }
+
+        private void SetSurfaceEdgeFadePreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float percent))
+            {
+                return;
+            }
+
+            Mod.Log.InfoFormat("Surface slider input: kind='Edge fade', raw='{0}', parsed={1}, maximum={2}", value, percent, 20f);
+            m_ActiveSurfaceEdgeFadeCurrent = Mathf.Clamp(percent, 0f, 10f);
+            SetSurfaceEdgeFadeValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeFadeCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceEdgeFadePercent.Update(m_ActiveSurfaceEdgeFadeCurrent);
+            m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
+        }
+
+        private void SetSurfaceEdgeFadeEndPreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float percent)) return;
+            m_ActiveSurfaceEdgeFadeEndCurrent = Mathf.Clamp(percent, 0f, 100f);
+            SetSurfaceEdgeFadeEndValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeFadeEndCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceEdgeFadeEndPercent.Update(m_ActiveSurfaceEdgeFadeEndCurrent);
+            m_SurfaceEdgeFadeEndsJson.Update(SerializeSurfaceEdgeFadeEndValues());
+        }
+
+        private void SetSurfaceEdgeNoisePreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float percent)) return;
+            Mod.Log.InfoFormat("Surface slider input: kind='Edge noise', raw='{0}', parsed={1}, maximum={2}", value, percent, 50f);
+            m_ActiveSurfaceEdgeNoiseCurrent = Mathf.Clamp(percent, 0f, 10f);
+            SetSurfaceEdgeNoiseValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeNoiseCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceEdgeNoisePercent.Update(m_ActiveSurfaceEdgeNoiseCurrent);
+            m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
+        }
+
+        private void SetSurfaceEdgeNoiseScalePreview(string value)
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId) || !float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float scale)) return;
+            m_ActiveSurfaceEdgeNoiseScaleCurrent = Mathf.Clamp(scale, 0.01f, 10f);
+            SetSurfaceEdgeNoiseScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceEdgeNoiseScale.Update(m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
         }
 
         private void ApplySurfaceScale()
@@ -618,16 +901,76 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            SetSurfaceScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent);
+            if (Mathf.Abs(m_ActiveSurfaceScaleCurrent - m_ActiveSurfaceScaleDefault) < 0.0001f)
+                m_SurfaceScaleValues.Remove(m_ActiveSurfaceScaleId);
+            else
+                SetSurfaceScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent);
+            SetSurfaceEdgeFadeValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeFadeCurrent);
+            // Edge fade zero means the complete prefab default pair, so the
+            // hidden end value must not be persisted independently.
+            if (Mathf.Abs(m_ActiveSurfaceEdgeFadeCurrent) < 0.0001f)
+                m_SurfaceEdgeFadeEndValues.Remove(m_ActiveSurfaceScaleId);
+            else
+                SetSurfaceEdgeFadeEndValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeFadeEndCurrent);
+            if (Mathf.Abs(m_ActiveSurfaceEdgeNoiseCurrent - m_ActiveSurfaceEdgeNoiseDefault) < 0.0001f)
+                m_SurfaceEdgeNoiseValues.Remove(m_ActiveSurfaceScaleId);
+            else
+                SetSurfaceEdgeNoiseValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeNoiseCurrent);
+            if (Mathf.Abs(m_ActiveSurfaceEdgeNoiseScaleCurrent - m_ActiveSurfaceEdgeNoiseScaleDefault) < 0.0001f)
+                m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
+            else
+                SetSurfaceEdgeNoiseScaleValue(m_ActiveSurfaceScaleId, m_ActiveSurfaceEdgeNoiseScaleCurrent);
             ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
             if (Mod.Settings != null)
             {
                 Mod.Settings.SurfaceScalesJson = SerializeSurfaceScaleValues();
+                Mod.Settings.SurfaceEdgeFadesJson = SerializeSurfaceEdgeFadeValues();
+                Mod.Settings.SurfaceEdgeFadeEndsJson = SerializeSurfaceEdgeFadeEndValues();
+                Mod.Settings.SurfaceEdgeNoisesJson = SerializeSurfaceEdgeNoiseValues();
+                Mod.Settings.SurfaceEdgeNoiseScalesJson = SerializeSurfaceEdgeNoiseScaleValues();
                 Mod.Settings.ApplyAndSave();
             }
 
             m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+            m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
+            m_SurfaceEdgeFadeEndsJson.Update(SerializeSurfaceEdgeFadeEndValues());
+            m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
+            m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
             CloseSurfaceScaleEditor();
+        }
+
+        private void RevertSurfaceScale()
+        {
+            if (string.IsNullOrEmpty(m_ActiveSurfaceScaleId)) return;
+            m_SurfaceScaleValues.Remove(m_ActiveSurfaceScaleId);
+            m_SurfaceEdgeFadeValues.Remove(m_ActiveSurfaceScaleId);
+            m_SurfaceEdgeFadeEndValues.Remove(m_ActiveSurfaceScaleId);
+            m_SurfaceEdgeNoiseValues.Remove(m_ActiveSurfaceScaleId);
+            m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
+            m_ActiveSurfaceScaleCurrent = m_ActiveSurfaceScaleDefault;
+            m_ActiveSurfaceEdgeFadeCurrent = 0;
+            m_ActiveSurfaceEdgeNoiseCurrent = m_ActiveSurfaceEdgeNoiseDefault;
+            m_ActiveSurfaceEdgeNoiseScaleCurrent = m_ActiveSurfaceEdgeNoiseScaleDefault;
+            ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleCurrent, updatePrefab: true);
+            m_SurfaceScaleHundredths.Update(Mathf.RoundToInt(m_ActiveSurfaceScaleCurrent * 100f));
+            m_SurfaceEdgeFadePercent.Update(0);
+            m_SurfaceEdgeFadeEndPercent.Update(0);
+            m_SurfaceEdgeNoisePercent.Update(m_ActiveSurfaceEdgeNoiseCurrent);
+            m_SurfaceEdgeNoiseScale.Update(m_ActiveSurfaceEdgeNoiseScaleCurrent);
+            m_SurfaceScaleRevertVersion.Update(++m_SurfaceScaleRevertCounter);
+            m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+            m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
+            m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
+            m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
+            if (Mod.Settings != null)
+            {
+                Mod.Settings.SurfaceScalesJson = SerializeSurfaceScaleValues();
+                Mod.Settings.SurfaceEdgeFadesJson = SerializeSurfaceEdgeFadeValues();
+                Mod.Settings.SurfaceEdgeFadeEndsJson = SerializeSurfaceEdgeFadeEndValues();
+                Mod.Settings.SurfaceEdgeNoisesJson = SerializeSurfaceEdgeNoiseValues();
+                Mod.Settings.SurfaceEdgeNoiseScalesJson = SerializeSurfaceEdgeNoiseScaleValues();
+                Mod.Settings.ApplyAndSave();
+            }
         }
 
         private void CancelSurfaceScale()
@@ -643,8 +986,36 @@ namespace AutomaticTextureReplacer
                     m_SurfaceScaleValues.Remove(m_ActiveSurfaceScaleId);
                 }
 
+                if (m_ActiveSurfaceEdgeFadeHadSavedValue)
+                {
+                    m_SurfaceEdgeFadeValues[m_ActiveSurfaceScaleId] = m_ActiveSurfaceEdgeFadeSavedValue;
+                }
+                else
+                {
+                    m_SurfaceEdgeFadeValues.Remove(m_ActiveSurfaceScaleId);
+                }
+
+                if (m_ActiveSurfaceEdgeFadeEndHadSavedValue)
+                    m_SurfaceEdgeFadeEndValues[m_ActiveSurfaceScaleId] = m_ActiveSurfaceEdgeFadeEndSavedValue;
+                else
+                    m_SurfaceEdgeFadeEndValues.Remove(m_ActiveSurfaceScaleId);
+
+                if (m_ActiveSurfaceEdgeNoiseHadSavedValue)
+                    m_SurfaceEdgeNoiseValues[m_ActiveSurfaceScaleId] = m_ActiveSurfaceEdgeNoiseSavedValue;
+                else
+                    m_SurfaceEdgeNoiseValues.Remove(m_ActiveSurfaceScaleId);
+
+                if (m_ActiveSurfaceEdgeNoiseScaleHadSavedValue)
+                    m_SurfaceEdgeNoiseScaleValues[m_ActiveSurfaceScaleId] = m_ActiveSurfaceEdgeNoiseScaleSavedValue;
+                else
+                    m_SurfaceEdgeNoiseScaleValues.Remove(m_ActiveSurfaceScaleId);
+
                 ApplySurfaceScaleToPrefab(m_ActiveSurfaceScaleId, m_ActiveSurfaceScaleBefore, updatePrefab: true);
                 m_SurfaceScalesJson.Update(SerializeSurfaceScaleValues());
+                m_SurfaceEdgeFadesJson.Update(SerializeSurfaceEdgeFadeValues());
+                m_SurfaceEdgeFadeEndsJson.Update(SerializeSurfaceEdgeFadeEndValues());
+                m_SurfaceEdgeNoisesJson.Update(SerializeSurfaceEdgeNoiseValues());
+                m_SurfaceEdgeNoiseScalesJson.Update(SerializeSurfaceEdgeNoiseScaleValues());
             }
 
             CloseSurfaceScaleEditor();
@@ -656,6 +1027,10 @@ namespace AutomaticTextureReplacer
             m_SurfaceScaleEditorIsOpen = false;
             m_SurfaceScaleSurfaceId.Update("");
             m_SurfaceScaleSurfaceName.Update("");
+            m_SurfaceEdgeFadePercent.Update(0);
+            m_SurfaceEdgeFadeEndPercent.Update(0);
+            m_SurfaceEdgeNoisePercent.Update(0);
+            m_SurfaceEdgeNoiseScale.Update(0.2f);
             m_SurfaceScaleEditorOpen.Update(false);
         }
 
@@ -671,6 +1046,39 @@ namespace AutomaticTextureReplacer
                 m_SurfaceScaleValues[surfaceId] = scale;
             }
         }
+
+        private void SetSurfaceEdgeFadeValue(string surfaceId, float percent)
+        {
+            percent = Mathf.Clamp(percent, 0f, 10f);
+            if (Mathf.Abs(percent) < 0.0001f)
+            {
+                m_SurfaceEdgeFadeValues.Remove(surfaceId);
+            }
+            else
+            {
+                m_SurfaceEdgeFadeValues[surfaceId] = percent;
+            }
+        }
+
+        private void SetSurfaceEdgeFadeEndValue(string surfaceId, float percent)
+        {
+            percent = Mathf.Clamp(percent, 0f, 100f);
+            if (Mathf.Abs(percent) < 0.0001f) m_SurfaceEdgeFadeEndValues.Remove(surfaceId);
+            else m_SurfaceEdgeFadeEndValues[surfaceId] = percent;
+        }
+
+        private void SetSurfaceEdgeNoiseValue(string surfaceId, float percent)
+        {
+            percent = Mathf.Clamp(percent, 0f, 10f);
+            if (Mathf.Abs(percent) < 0.0001f) m_SurfaceEdgeNoiseValues.Remove(surfaceId);
+            else m_SurfaceEdgeNoiseValues[surfaceId] = percent;
+        }
+
+        private void SetSurfaceEdgeNoiseScaleValue(string surfaceId, float value)
+        {
+            m_SurfaceEdgeNoiseScaleValues[surfaceId] = Mathf.Clamp(value, 0.01f, 10f);
+        }
+
 
         private bool TryFindSurfacePrefab(string surfaceId, out Entity surfaceEntity, out PrefabBase surfacePrefab, out RenderedArea renderedArea)
         {
@@ -706,19 +1114,61 @@ namespace AutomaticTextureReplacer
         private void RestoreConfiguredSurfaceScales(PrefabSystem prefabSystem)
         {
             m_AreaBatchSystem ??= World.GetOrCreateSystemManaged<AreaBatchSystem>();
-            foreach (KeyValuePair<string, float> entry in m_SurfaceScaleValues.ToArray())
+            HashSet<string> configuredSurfaceIds = new HashSet<string>(m_SurfaceScaleValues.Keys, StringComparer.Ordinal);
+            configuredSurfaceIds.UnionWith(m_SurfaceEdgeFadeValues.Keys);
+            configuredSurfaceIds.UnionWith(m_SurfaceEdgeFadeEndValues.Keys);
+            configuredSurfaceIds.UnionWith(m_SurfaceEdgeNoiseValues.Keys);
+            configuredSurfaceIds.UnionWith(m_SurfaceEdgeNoiseScaleValues.Keys);
+            foreach (string surfaceId in configuredSurfaceIds)
             {
-                if (m_RestoredSurfaceScaleIds.Contains(entry.Key))
+                if (m_RestoredSurfaceScaleIds.Contains(surfaceId))
                 {
                     continue;
                 }
 
-                if (TryFindSurfacePrefab(entry.Key, out _, out PrefabBase _, out RenderedArea renderedArea))
+                float scale = m_SurfaceScaleValues.TryGetValue(surfaceId, out float savedScale) ? savedScale : 1f;
+                if (TryFindSurfacePrefab(surfaceId, out _, out PrefabBase _, out RenderedArea renderedArea))
                 {
-                    if (ApplySurfaceScaleToPrefab(entry.Key, entry.Value, updatePrefab: true, prefabSystem))
+                    if (ApplySurfaceScaleToPrefab(surfaceId, scale, updatePrefab: true, prefabSystem))
                     {
-                        m_RestoredSurfaceScaleIds.Add(entry.Key);
+                        m_RestoredSurfaceScaleIds.Add(surfaceId);
                     }
+                }
+            }
+        }
+
+        // Capture the unmodified prefab appearance before a map can instantiate
+        // surfaces or restore previously saved runtime changes.
+        private void CaptureSurfaceDefaults(PrefabSystem prefabSystem)
+        {
+            using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (!prefabSystem.TryGetPrefab<SurfacePrefab>(entity, out SurfacePrefab prefab) || prefab == null ||
+                        !prefab.TryGet<RenderedArea>(out RenderedArea renderedArea) || renderedArea == null)
+                    {
+                        continue;
+                    }
+
+                    string surfaceId = prefab.GetPrefabID().ToString();
+                    Material material = renderedArea.m_Material;
+                    float2 edgeFade = renderedArea.m_EdgeFadeRange;
+                    float2 edgeNoise = renderedArea.m_EdgeNoise;
+                    if (material != null && material.HasProperty(s_EdgeFadeRangeProperty))
+                    {
+                        Vector4 value = material.GetVector(s_EdgeFadeRangeProperty);
+                        edgeFade = new float2(value.x, value.y);
+                    }
+                    if (material != null && material.HasProperty(s_EdgeNoiseProperty))
+                    {
+                        Vector4 value = material.GetVector(s_EdgeNoiseProperty);
+                        edgeNoise = new float2(value.x, value.y);
+                    }
+
+                    if (!m_SurfaceScaleBaseValues.ContainsKey(surfaceId)) m_SurfaceScaleBaseValues[surfaceId] = renderedArea.m_UVScale;
+                    if (!m_SurfaceEdgeFadeBaseValues.ContainsKey(surfaceId)) m_SurfaceEdgeFadeBaseValues[surfaceId] = edgeFade;
+                    if (!m_SurfaceEdgeNoiseBaseValues.ContainsKey(surfaceId)) m_SurfaceEdgeNoiseBaseValues[surfaceId] = edgeNoise;
                 }
             }
         }
@@ -807,6 +1257,29 @@ namespace AutomaticTextureReplacer
                         m_SurfaceScaleBaseValues[surfaceId] = baseScale;
                     }
 
+                    if (!m_SurfaceEdgeFadeBaseValues.ContainsKey(surfaceId))
+                    {
+                        float2 baseEdgeFadeRange = renderedArea.m_EdgeFadeRange;
+                        if (sourceMaterial.HasProperty(s_EdgeFadeRangeProperty))
+                        {
+                            Vector4 value = sourceMaterial.GetVector(s_EdgeFadeRangeProperty);
+                            baseEdgeFadeRange = new float2(value.x, value.y);
+                        }
+
+                        m_SurfaceEdgeFadeBaseValues[surfaceId] = baseEdgeFadeRange;
+                    }
+
+                    if (!m_SurfaceEdgeNoiseBaseValues.ContainsKey(surfaceId))
+                    {
+                        float2 baseEdgeNoise = renderedArea.m_EdgeNoise;
+                        if (sourceMaterial.HasProperty(s_EdgeNoiseProperty))
+                        {
+                            Vector4 value = sourceMaterial.GetVector(s_EdgeNoiseProperty);
+                            baseEdgeNoise = new float2(value.x, value.y);
+                        }
+                        m_SurfaceEdgeNoiseBaseValues[surfaceId] = baseEdgeNoise;
+                    }
+
                     // AreaBatchSystem applies RenderedArea.m_UVScale only when the
                     // component uses OverrideMaterial. Keep a private material copy
                     // and copy its scalar settings into RenderedArea before enabling
@@ -831,18 +1304,66 @@ namespace AutomaticTextureReplacer
                             renderedArea.m_Version);
                     }
 
-                    // UV scale is a repeat count: smaller UV scale makes the image
-                    // occupy more world space. Divide by the user-facing factor so
-                    // Scale 10 means ten times larger texture details.
-                    float scaledUv = baseScale / ClampSurfaceScale(scale);
+                    // The editor exposes an intuitive texture-size factor. The game
+                    // stores the reciprocal UV scale, so apply exactly 1 / Scale.
+                    float userScale = ClampSurfaceScale(scale);
+                    float scaledUv = 1f / userScale;
                     renderedArea.m_UVScale = scaledUv;
                     renderedArea.m_Material.SetFloat(materialUvScaleProperty, scaledUv);
+                    float edgeFadePercent = m_SurfaceEdgeFadeValues.TryGetValue(surfaceId, out float savedEdgeFade)
+                        ? savedEdgeFade
+                        : m_SurfaceEdgeFadeBaseValues[surfaceId].x;
+                    float edgeFadeEndPercent = m_SurfaceEdgeFadeEndValues.TryGetValue(surfaceId, out float savedEdgeFadeEnd)
+                        ? savedEdgeFadeEnd
+                        : m_SurfaceEdgeFadeBaseValues[surfaceId].y;
+                    float2 edgeFadeRange = ExpandSurfaceEdgeFadeRange(
+                        m_SurfaceEdgeFadeBaseValues[surfaceId],
+                        edgeFadePercent,
+                        edgeFadeEndPercent);
+                    renderedArea.m_EdgeFadeRange = edgeFadeRange;
+                    if (s_EdgeFadeRangeProperty != 0 && renderedArea.m_Material.HasProperty(s_EdgeFadeRangeProperty))
+                    {
+                        renderedArea.m_Material.SetVector(
+                            s_EdgeFadeRangeProperty,
+                            new Vector4(edgeFadeRange.x, edgeFadeRange.y, 0f, 0f));
+                    }
+                    float edgeNoisePercent = m_SurfaceEdgeNoiseValues.TryGetValue(surfaceId, out float savedEdgeNoise)
+                        ? savedEdgeNoise
+                        : m_SurfaceEdgeNoiseBaseValues[surfaceId].x;
+                    float2 edgeNoise = m_SurfaceEdgeNoiseBaseValues[surfaceId];
+                    // The shader's first EdgeNoise component is noise strength; the
+                    // second is its scale. Leave the source scale intact and expose
+                    // strength as a percentage so zero restores the exact source.
+                    // Keep the exact user input in the material/batch. The UI
+                    // range is intentionally not normalized here.
+                    edgeNoise.x = edgeNoisePercent;
+                    if (m_SurfaceEdgeNoiseScaleValues.TryGetValue(surfaceId, out float savedEdgeNoiseScale))
+                        edgeNoise.y = Mathf.Max(0.01f, savedEdgeNoiseScale);
+                    Mod.Log.InfoFormat(
+                        "Surface appearance output: surface='{0}', scale={1}, uvScale={2}, edgeFadeInput={3}, edgeFadeEndInput={4}, edgeFadeRange=({5},{6}), edgeNoiseInput={7}, edgeNoise=({8},{9})",
+                        prefab.name,
+                        userScale,
+                        scaledUv,
+                        edgeFadePercent,
+                        edgeFadeEndPercent,
+                        edgeFadeRange.x,
+                        edgeFadeRange.y,
+                        edgeNoisePercent,
+                        edgeNoise.x,
+                        edgeNoise.y);
+                    renderedArea.m_EdgeNoise = edgeNoise;
+                    if (s_EdgeNoiseProperty != 0 && renderedArea.m_Material.HasProperty(s_EdgeNoiseProperty))
+                    {
+                        renderedArea.m_Material.SetVector(s_EdgeNoiseProperty, new Vector4(edgeNoise.x, edgeNoise.y, 0f, 0f));
+                    }
                     if (updatePrefab)
                     {
                         prefabSystem.UpdatePrefab(prefab);
                     }
 
                     SetAreaBatchUvScale(prefabBatchIndex, scaledUv);
+                    SetAreaBatchEdgeFadeRange(prefabBatchIndex, edgeFadeRange);
+                    SetAreaBatchEdgeNoise(prefabBatchIndex, edgeNoise);
 
                     // Existing area instances can hold their own batch index even
                     // though they share this surface prefab. Update those batches
@@ -860,30 +1381,55 @@ namespace AutomaticTextureReplacer
 
                             int instanceBatch = EntityManager.GetComponentData<Batch>(instance).m_BatchIndex;
                             SetAreaBatchUvScale(instanceBatch, scaledUv);
+                            SetAreaBatchEdgeFadeRange(instanceBatch, edgeFadeRange);
+                            SetAreaBatchEdgeNoise(instanceBatch, edgeNoise);
                         }
                     }
 
+                    // AreaBatchSystem may keep the material in its enabled-shader
+                    // cache after its properties were changed. Notify it once so
+                    // the new edge fade reaches the visible batches immediately.
+                    m_AreaBatchSystem.EnabledShadersUpdated();
+
                     Mod.Log.InfoFormat(
-                        "Surface texture scale applied: surface='{0}', factor={1}, uvScale={2}, prefabBatch={3}, updatedPrefab={4}",
+                        "Surface appearance applied: surface='{0}', scale={1}, uvScale={2}, edgeFadePercent={3}, edgeFadeRange=({4},{5}), edgeNoisePercent={6}, edgeNoise=({7},{8}), prefabBatch={9}, updatedPrefab={10}",
                         prefab.name,
-                        ClampSurfaceScale(scale),
+                        userScale,
                         scaledUv,
+                        edgeFadePercent,
+                        edgeFadeRange.x,
+                        edgeFadeRange.y,
+                        edgeNoisePercent,
+                        edgeNoise.x,
+                        edgeNoise.y,
                         prefabBatchIndex,
                         updatePrefab);
                     applied = true;
                 }
             }
 
-            if (applied && m_SurfaceScaleValues.ContainsKey(surfaceId))
+            if (applied && (m_SurfaceScaleValues.ContainsKey(surfaceId) || m_SurfaceEdgeFadeValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseValues.ContainsKey(surfaceId) || m_SurfaceEdgeNoiseScaleValues.ContainsKey(surfaceId)))
             {
                 m_RestoredSurfaceScaleIds.Add(surfaceId);
             }
-            else if (!applied)
+            else
             {
                 m_RestoredSurfaceScaleIds.Remove(surfaceId);
             }
             return applied;
         }
+
+        private static float2 ExpandSurfaceEdgeFadeRange(float2 baseRange, float startPercent, float endPercent)
+        {
+            return new float2(
+                startPercent <= 0
+                    ? baseRange.x
+                    : startPercent,
+                startPercent <= 0
+                    ? baseRange.y
+                    : 0.001f);
+        }
+
 
         private static void CopyMaterialSettingsToRenderedArea(Material material, RenderedArea renderedArea)
         {
@@ -930,6 +1476,35 @@ namespace AutomaticTextureReplacer
 
             material.SetFloat(uvScaleProperty, uvScale);
         }
+
+        private void SetAreaBatchEdgeFadeRange(int batchIndex, float2 edgeFadeRange)
+        {
+            if (m_AreaBatchSystem == null || batchIndex < 0 || batchIndex >= m_AreaBatchSystem.GetBatchCount() ||
+                s_EdgeFadeRangeProperty == 0 ||
+                !m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material material, out _, out _, out _) ||
+                material == null || !material.HasProperty(s_EdgeFadeRangeProperty))
+            {
+                return;
+            }
+
+            material.SetVector(
+                s_EdgeFadeRangeProperty,
+                new Vector4(edgeFadeRange.x, edgeFadeRange.y, 0f, 0f));
+        }
+
+        private void SetAreaBatchEdgeNoise(int batchIndex, float2 edgeNoise)
+        {
+            if (m_AreaBatchSystem == null || batchIndex < 0 || batchIndex >= m_AreaBatchSystem.GetBatchCount() ||
+                s_EdgeNoiseProperty == 0 ||
+                !m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out Material material, out _, out _, out _) ||
+                material == null || !material.HasProperty(s_EdgeNoiseProperty))
+            {
+                return;
+            }
+
+            material.SetVector(s_EdgeNoiseProperty, new Vector4(edgeNoise.x, edgeNoise.y, 0f, 0f));
+        }
+
 
         private void ReplaceSurfaces(string requestedRuleId)
         {
@@ -1173,7 +1748,9 @@ namespace AutomaticTextureReplacer
                         AssetDataPath.Create("Custom Surfaces", stableHash),
                         texture,
                         textureGuid);
-                    if (textureAsset == null || !TryCreateCustomSurface(prefabSystem, file, stableHash, textureAsset, out Entity surfaceEntity))
+                    SurfacePreview preview = CreateSurfacePreview(texture);
+                    if (textureAsset == null || preview?.Thumbnail == null ||
+                        !TryCreateCustomSurface(prefabSystem, file, stableHash, textureAsset, preview.Thumbnail, out Entity surfaceEntity))
                     {
                         UnityEngine.Object.Destroy(texture);
                         continue;
@@ -1184,12 +1761,11 @@ namespace AutomaticTextureReplacer
                         UnityEngine.Object.Destroy(texture);
                         continue;
                     }
-                    SurfacePreview preview = CreateSurfacePreview(texture);
                     string relativePath = file.RootFolder + "/" + file.RelativePath.Replace('\\', '/');
                     m_CustomSurfacesById[registeredPrefab.GetPrefabID().ToString()] = new CustomSurfaceInfo
                     {
                         RelativePath = relativePath,
-                        DisplayName = file.DisplayName,
+                        DisplayName = file.RootFolder + " - " + file.DisplayName,
                         Group = file.RootFolder,
                         Thumbnail = preview.Thumbnail,
                         TooltipThumbnail = preview.TooltipThumbnail,
@@ -1208,6 +1784,7 @@ namespace AutomaticTextureReplacer
             CustomTextureFile file,
             string stableHash,
             TextureAsset textureAsset,
+            string thumbnail,
             out Entity surfaceEntity)
         {
             surfaceEntity = Entity.Null;
@@ -1241,8 +1818,9 @@ namespace AutomaticTextureReplacer
                 return false;
             }
 
+            string safeModName = SanitizePrefabName(file.RootFolder);
             string safeName = SanitizePrefabName(file.DisplayName);
-            string prefabName = "Replacement Solutions Custom " + stableHash + " " + safeName;
+            string prefabName = safeModName + " - " + safeName;
             SurfacePrefab custom = (SurfacePrefab)template.Clone(prefabName);
             custom.Remove<UIObject>();
             UIAssetCategoryPrefab surfaceCategory = FindTilesSurfacesMenuCategory(prefabSystem);
@@ -1250,7 +1828,8 @@ namespace AutomaticTextureReplacer
             {
                 UIObject uiObject = custom.AddComponent<UIObject>();
                 uiObject.m_Group = surfaceCategory;
-                uiObject.m_Priority = 0;
+                uiObject.m_Priority = m_CustomSurfaceMenuPriority++;
+                uiObject.m_Icon = thumbnail;
             }
             else
             {
@@ -1278,6 +1857,10 @@ namespace AutomaticTextureReplacer
 
             surfaceEntity = prefabSystem.GetEntity(custom);
             prefabSystem.UpdatePrefab(custom);
+            string localeId = GameManager.instance?.localizationManager?.fallbackLocaleId ?? "en-US";
+            GameManager.instance?.localizationManager?.AddSource(localeId, new CustomSurfaceNameLocale(
+                "Assets.NAME[" + custom.name + "]",
+                file.RootFolder + " - " + file.DisplayName));
             if (surfaceCategory != null)
             {
                 Mod.Log.InfoFormat(
@@ -1287,6 +1870,29 @@ namespace AutomaticTextureReplacer
                     surfaceCategory.name);
             }
             return surfaceEntity != Entity.Null;
+        }
+
+        private sealed class CustomSurfaceNameLocale : Colossal.IDictionarySource
+        {
+            private readonly string m_Key;
+            private readonly string m_Value;
+
+            public CustomSurfaceNameLocale(string key, string value)
+            {
+                m_Key = key;
+                m_Value = value;
+            }
+
+            public IEnumerable<KeyValuePair<string, string>> ReadEntries(
+                IList<Colossal.IDictionaryEntryError> errors,
+                Dictionary<string, int> indexCounts)
+            {
+                return new[] { new KeyValuePair<string, string>(m_Key, m_Value) };
+            }
+
+            public void Unload()
+            {
+            }
         }
 
         private UIAssetCategoryPrefab FindTilesSurfacesMenuCategory(PrefabSystem prefabSystem)

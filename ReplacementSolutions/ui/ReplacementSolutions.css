@@ -27,6 +27,7 @@
 .atrAlsoNewBuildingsCheckbox{width:24rem;height:24rem;min-width:24rem;min-height:24rem}
 .atrEditButton{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
 .atrRevertAllButton,.atrDeleteRuleButton{background:#8e2632!important;border:2rem solid #ef7180!important;color:rgba(255,255,255,.98)!important}
+.atrTintedPrimaryButton-red{background:#8e2632!important;border:2rem solid #ef7180!important;color:rgba(255,255,255,.98)!important}
 .atrRulesHeader{flex:0 0 auto;background:rgba(26,43,59,.62);color:rgba(255,255,255,.96);font-weight:600;border-bottom:1rem solid rgba(255,255,255,.12)}
 .atrRulesScroll{flex:1 1 auto;min-height:0;width:100%;overflow-x:hidden;overflow-y:hidden;background:rgba(82,117,139,.28);border-radius:3rem}
 .atrRuleRow{display:flex!important;min-width:0;width:100%;margin:3rem 2rem;box-sizing:border-box;flex-direction:row!important;align-items:flex-start!important;gap:10rem;padding:8rem;border:1rem solid rgba(175,211,228,.28);border-radius:3rem;background:rgba(43,72,91,.5)!important;color:rgba(239,248,252,.92)}
@@ -88,21 +89,31 @@
 .atrSurfaceTile>img:first-child{display:block;width:100%;height:100%}
 .atrSurfaceTooltip{width:320rem;max-width:520rem}
 .atrSurfaceTooltipImage{display:block;width:100%;max-height:360rem;margin-top:6rem;background:rgba(0,0,0,.18);border-radius:3rem}
-.atrScaleBadge{position:absolute;top:2rem;right:2rem;z-index:2;padding:1rem 3rem;border-radius:2rem;background:rgba(8,24,38,.88);color:#fff;font-size:9rem;font-weight:600;line-height:1.15;white-space:nowrap;text-shadow:0 1rem 2rem #000;pointer-events:none}
-.atrRuleSurfaceIconFrame>.atrScaleBadge{top:0;right:0;font-size:6rem;padding:0 2rem}
-.atrScaleDialogPositioner{position:absolute;width:900rem;height:720rem;min-width:0;min-height:0;z-index:1200;pointer-events:none}
-.atrScaleDialogPanel{width:100%;height:100%}
+.atrScaleBadge{position:absolute;top:1rem;right:2rem;z-index:2;padding:0;color:#ef5367;font-size:14rem;font-weight:800;line-height:1;white-space:nowrap;text-shadow:0 1rem 2rem #000;pointer-events:none}
+.atrRuleSurfaceIconFrame>.atrScaleBadge{top:0;right:1rem;font-size:10rem;padding:0}
+.atrScaleDialogPositioner{position:absolute;width:900rem;min-width:0;min-height:0;max-height:calc(100vh - 16rem);z-index:1200;pointer-events:none}
+.atrScaleDialogPanel{width:100%;height:auto;min-height:0;max-height:calc(100vh - 16rem)}
 .atrScaleDialogPositioner>.atrScaleDialogPanel,.atrScaleDialogPositioner>.atrFallbackPanel{pointer-events:auto}
-.atrScaleDialogPanelContent{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
+.atrScaleDialogPanelContent{display:flex;flex:0 0 auto;flex-direction:column;min-height:0;max-height:calc(100vh - 16rem);overflow:hidden}
 .atrScaleDialogHeader{min-height:36rem;cursor:move;user-select:none}
-.atrScaleDialogBody{display:flex;flex:1 1 auto;min-width:0;min-height:0;flex-direction:column;gap:10rem;box-sizing:border-box;padding:16rem 20rem;color:rgba(255,255,255,.94);overflow:hidden}
-.atrScaleSurfaceDetails{display:flex;min-width:0;min-height:0;flex:1 1 auto;overflow:hidden}
-.atrScaleSurfaceDetails .atrSurfaceTooltip{display:flex;width:100%;max-width:none;height:100%;min-height:0;flex-direction:column;gap:5rem;overflow:hidden}
-.atrScaleSurfaceDetails .atrSurfaceTooltip strong,.atrScaleSurfaceDetails .atrSurfaceTooltip span{flex:0 0 auto;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
-.atrScaleSurfaceDetails .atrSurfaceTooltipImage{display:block;width:auto;height:auto;max-width:100%;max-height:100%;min-height:0;flex:1 1 auto;align-self:center;object-fit:contain}
+.atrScaleDialogBody{display:flex;flex:1 1 auto;min-width:0;min-height:0;flex-direction:column;gap:10rem;box-sizing:border-box;padding:16rem 20rem;color:rgba(255,255,255,.94);overflow:auto}
+.atrScaleSurfaceDetails{display:flex;width:100%;height:auto;min-width:0;flex:0 0 auto;overflow:hidden}
+.atrScaleSurfaceInfo{display:flex;width:100%;height:auto;min-width:0;flex:0 0 auto;align-self:stretch;flex-direction:column;gap:5rem;overflow:hidden}
+.atrScaleSurfaceInfo strong,.atrScaleSurfaceInfo span{flex:0 0 auto;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.atrScaleSurfaceInfo .atrSurfaceTooltipImage{display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;object-fit:contain}
+.atrScaleSurfaceInfo .atrScaleDialogTextureImage{display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;overflow:hidden;background:rgba(0,0,0,.18)}
+.atrScaleTexturePreview{position:relative;display:block;width:100%;height:0;min-width:0;min-height:120rem;flex:1 1 0;align-self:stretch;overflow:hidden;border:1rem solid rgba(180,210,224,.35);border-radius:3rem;background-color:#273a47;background-image:linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%),linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%);background-position:0 0,8rem 8rem;background-size:16rem 16rem}
+.atrScaleTexturePreviewImage{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;transform-origin:top left}
 .atrScaleControlRow{display:flex;flex:0 0 auto;align-items:center;gap:16rem;min-width:0}
-.atrScaleGameSlider{min-width:0;flex:1 1 auto}
-.atrScaleCurrentValue{flex:0 0 auto;text-align:right;font-size:1.2em;font-weight:600;color:#69d5f0;white-space:nowrap}
+.atrScaleGameSlider{width:100%;min-width:0;flex:1 1 auto}
+.atrScaleControlLabel{flex:0 0 10em;width:10em;min-width:10em;color:rgba(255,255,255,.82);font-weight:600;white-space:nowrap}
+.atrScaleCurrentValue{flex:0 0 6em;width:6em;min-width:6em;margin-right:8rem;text-align:right;font-size:1.2em;font-weight:600;color:#69d5f0;white-space:nowrap}
 .atrScaleSlider{width:100%;margin:4rem 0;accent-color:#38c896}
+.atrScaleSliderHost{display:flex;flex:1 1 auto;min-width:0;align-items:center}
+.atrScaleSliderHost>*{width:100%}
+.atrScaleDialogTextureImage{display:block;width:100%;height:auto;max-height:none;overflow:hidden;object-fit:contain;background:rgba(0,0,0,.18);border-radius:3rem}
+.atrSurfaceFadeVertical{overflow:hidden}
+.atrScaleDialogTextureImage>.atrScaleTexturePreviewImage{position:relative;inset:auto;width:100%;height:100%;object-fit:contain}
+.atrSurfaceFadeVertical>.atrScaleTexturePreviewImage{mask-composite:source-in;-webkit-mask-composite:source-in}
 .atrScaleRangeLabels{display:flex;justify-content:space-between;color:rgba(255,255,255,.65)}
-.atrScaleDialogFooter{display:flex;justify-content:flex-end;gap:8rem;margin-top:auto}
+.atrScaleDialogFooter{display:flex;justify-content:flex-end;gap:8rem;margin-top:8rem;position:sticky;bottom:0;padding-top:8rem;background:rgba(38,58,71,.96)}
