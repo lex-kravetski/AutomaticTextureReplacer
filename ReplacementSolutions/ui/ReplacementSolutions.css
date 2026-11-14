@@ -66,6 +66,11 @@
 .atrPickerGroups{padding:4rem}
 .atrPickerGroupSection{margin-bottom:8rem}
 .atrPickerGlobalActions{display:flex;flex:0 0 auto;flex-direction:row;justify-content:flex-end;gap:6rem;margin:0 4rem 6rem}
+.atrPickerFilter{display:flex;flex:0 0 auto;align-items:center;gap:6rem;margin:0 4rem 8rem}
+.atrPickerFilterInput{min-width:0;flex:1 1 auto;height:34rem;box-sizing:border-box;padding:4rem 8rem;border:1rem solid rgba(180,210,224,.45);border-radius:3rem;background:rgba(14,31,44,.72);color:rgba(255,255,255,.96);font:inherit}
+.atrPickerFilterInput::placeholder{color:rgba(220,235,242,.55)}
+.atrPickerFilterClear{display:flex;width:34rem;height:34rem;flex:0 0 34rem;align-items:center;justify-content:center;box-sizing:border-box;padding:0;border:2rem solid #ef7180;border-radius:4rem;background:#8e2632;color:#fff;font:inherit;line-height:1;cursor:pointer}
+.atrPickerFilterClear:hover{background:#a83240}
 .atrPickerGroupHeader{display:flex;width:100%;min-height:34rem;flex-direction:row;align-items:center;justify-content:flex-start;gap:6rem;box-sizing:border-box;margin-bottom:4rem;padding:4rem 6rem;background:rgba(26,43,59,.62);color:rgba(255,255,255,.94);text-align:left}
 .atrPickerGroupToggle{display:flex;min-width:0;min-height:30rem;flex:1 1 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:8rem;padding:2rem 4rem;border:0;background:transparent;color:rgba(255,255,255,.94);text-align:left;cursor:pointer}
 .atrTintedPrimaryButton-blue{background:#08264b!important;border:2rem solid #55bfd9!important;color:rgba(255,255,255,.98)!important}
@@ -106,10 +111,11 @@
 .atrScaleSurfaceInfo{display:flex;width:100%;height:auto;min-width:0;flex:0 0 auto;align-self:stretch;flex-direction:column;gap:5rem;overflow:hidden}
 .atrScaleSurfaceInfo strong,.atrScaleSurfaceInfo span{flex:0 0 auto;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .atrScaleSurfaceInfo .atrSurfaceTooltipImage{display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;object-fit:contain}
-.atrScaleSurfaceInfo .atrScaleDialogTextureImage{display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;overflow:hidden;background:rgba(0,0,0,.18)}
+.atrScaleSurfaceInfo .atrScaleDialogTextureImage{position:relative;display:block;width:280rem;height:280rem;max-width:100%;max-height:none;min-height:0;flex:0 0 auto;align-self:center;aspect-ratio:1 / 1;overflow:hidden;background:rgba(0,0,0,.18)}
+.atrScaleSurfaceInfo .atrScaleDialogTextureImage>.atrBaseColorOverlay{z-index:2;mix-blend-mode:multiply;opacity:1}
 .atrScaleTexturePreview{position:relative;display:block;width:100%;height:0;min-width:0;min-height:120rem;flex:1 1 0;align-self:stretch;overflow:hidden;border:1rem solid rgba(180,210,224,.35);border-radius:3rem;background-color:#273a47;background-image:linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%),linear-gradient(45deg,rgba(255,255,255,.08) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.08) 75%);background-position:0 0,8rem 8rem;background-size:16rem 16rem}
 .atrScaleTexturePreviewImage{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;transform-origin:top left}
-.atrBaseColorOverlay{position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply}
+.atrBaseColorOverlay{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:multiply}
 .atrScaleControlRow{display:flex;flex:0 0 auto;align-items:center;gap:16rem;min-width:0}
 .atrScaleGameSlider{width:100%;min-width:0;flex:1 1 auto}
 .atrScaleControlLabel{flex:0 0 10em;width:10em;min-width:10em;color:rgba(255,255,255,.82);font-weight:600;white-space:nowrap}

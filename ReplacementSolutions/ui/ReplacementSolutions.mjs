@@ -248,7 +248,7 @@ const register = (moduleRegistry) => {
             style: imageStyle,
           });
       preview = appearancePreview.applyScale === false
-        ? h("div", { className: "atrScaleDialogTextureImage" }, imageElement, appearancePreview.baseColor || appearancePreview.baseColorCss ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss || hsbaToCss(appearancePreview.baseColor.h, appearancePreview.baseColor.s, appearancePreview.baseColor.b, appearancePreview.baseColor.a) } }) : null)
+        ? h("div", { className: "atrScaleDialogTextureImage" }, imageElement, (appearancePreview.baseColor || appearancePreview.baseColorCss) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss || hsbaToCss(appearancePreview.baseColor.h, appearancePreview.baseColor.s, appearancePreview.baseColor.b, appearancePreview.baseColor.a) } }) : null)
         : h("div", { className: "atrScaleTexturePreview" }, imageElement, appearancePreview.baseColor || appearancePreview.baseColorCss ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: appearancePreview.baseColorCss || hsbaToCss(appearancePreview.baseColor.h, appearancePreview.baseColor.s, appearancePreview.baseColor.b, appearancePreview.baseColor.a) } }) : null);
     }
 
@@ -424,6 +424,7 @@ const register = (moduleRegistry) => {
     const areaRulesJson = useValue(areaRulesJson$);
     const [selectedIds, setSelectedIds] = React.useState(() => new Set());
     const [collapsedGroups, setCollapsedGroups] = React.useState({});
+    const [filterText, setFilterText] = React.useState("");
     const lastSelection = React.useRef(null);
     const pendingShiftClick = React.useRef(false);
     const [dragPosition, setDragPosition] = React.useState(null);
@@ -476,6 +477,14 @@ const register = (moduleRegistry) => {
     const groups = React.useMemo(() => {
       const grouped = new Map();
       pickerCatalog.forEach((surface) => {
+        const query = filterText.trim().toLocaleLowerCase();
+        if (query) {
+          const searchableText = [surface.name, surface.group, surface.menuPath]
+            .filter(Boolean)
+            .join(" ")
+            .toLocaleLowerCase();
+          if (!searchableText.includes(query)) return;
+        }
         const name = surface.group || "In-game asset";
         if (!grouped.has(name)) grouped.set(name, []);
         grouped.get(name).push(surface);
@@ -487,7 +496,7 @@ const register = (moduleRegistry) => {
           const order = priority(first.name) - priority(second.name);
           return order || first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
         });
-    }, [pickerCatalog, pickerContext.kind, targetPicker]);
+    }, [pickerCatalog, pickerContext.kind, targetPicker, filterText]);
     React.useEffect(() => {
       if (open) {
         // Keep selections that are currently filtered out. They remain part of the rule
@@ -719,12 +728,29 @@ const register = (moduleRegistry) => {
       });
       lastSelection.current = null;
     }, "flat", "atrPickerGlobalButton", BUTTON_STYLE.pickerGlobal));
+    const filterControl = h("div", { className: "atrPickerFilter" },
+      h("input", {
+        className: "atrPickerFilterInput",
+        type: "text",
+        value: filterText,
+        placeholder: "Filter surfaces…",
+        "aria-label": "Filter surfaces",
+        onChange: (event) => setFilterText(event.currentTarget.value),
+      }),
+      h("button", {
+        className: "atrPickerFilterClear",
+        type: "button",
+        title: "Clear filter",
+        "aria-label": "Clear filter",
+        onClick: () => setFilterText(""),
+      }, "×"));
     const footer = h("div", { className: "atrPickerFooter" },
       button("Apply", applySelection, "primary"),
       button("Cancel", closePicker, "flat"));
     const body = h("div", { className: "atrPickerBody", style: { fontSize: scaledFontSize } },
       groupControls,
-      pickerCatalog.length === 0
+      filterControl,
+      groups.length === 0
         ? h("div", { className: "atrPickerEmpty" }, pickerContext.kind === "areas" && pickerContext.side === "source" ? "No special industries found." : "No surfaces found.")
         : h(ui.Scrollable || "div", { className: "atrPickerScroll", vertical: true, useNewStyle: true },
           h("div", { className: "atrPickerGroups" }, sections)),
@@ -1137,7 +1163,6 @@ const register = (moduleRegistry) => {
     const previewScale = 1;
     const previewEdgeFade = Number(edgeFadePercent) || 0;
     const previewEdgeNoise = Number(edgeNoisePercent) || 0;
-    const previewBaseColor = { h: baseColorHue, s: baseColorSaturation, b: baseColorBrightness, a: baseColorAlpha };
     const close = () => trigger("replacementsolutions", "cancelSurfaceScale");
     const onChange = (value) => trigger("replacementsolutions", "setSurfaceScalePreview", String(Math.round(roundSliderDisplayValue(value) * 100)));
     const onScaleSliderChange = (...args) => {
@@ -1177,6 +1202,14 @@ const register = (moduleRegistry) => {
     const [baseColorSaturationPosition, setBaseColorSaturationPosition] = React.useState(Number.isFinite(Number(baseColorSaturation)) ? Number(baseColorSaturation) : 0);
     const [baseColorBrightnessPosition, setBaseColorBrightnessPosition] = React.useState(Number(baseColorBrightness) || 1);
     const [baseColorAlphaPosition, setBaseColorAlphaPosition] = React.useState(Number.isFinite(Number(baseColorAlpha)) ? Number(baseColorAlpha) : 1);
+    // Use the picker's local React state for its preview. The C# trigger updates the
+    // live prefab, while its ValueBindings arrive on a separate UI update cycle.
+    const previewBaseColor = {
+      h: baseColorHuePosition,
+      s: baseColorSaturationPosition,
+      b: baseColorBrightnessPosition,
+      a: baseColorAlphaPosition,
+    };
     const onBaseColorChange = (setter, kind, ...args) => {
       const value = Math.max(0, Math.min(1, readSliderDirectValue(...args)));
       setter(value);

@@ -985,6 +985,10 @@ namespace AutomaticTextureReplacer
                 !float.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float alpha)) return;
             m_ActiveSurfaceBaseColorCurrent = Color.HSVToRGB(Mathf.Repeat(hue, 1f), Mathf.Clamp01(saturation), Mathf.Clamp01(brightness));
             m_ActiveSurfaceBaseColorCurrent.a = Mathf.Clamp01(alpha);
+            m_SurfaceBaseColorHue.Update(Mathf.Repeat(hue, 1f));
+            m_SurfaceBaseColorSaturation.Update(Mathf.Clamp01(saturation));
+            m_SurfaceBaseColorBrightness.Update(Mathf.Clamp01(brightness));
+            m_SurfaceBaseColorAlpha.Update(Mathf.Clamp01(alpha));
             if (m_SurfaceBaseColorDefaults.TryGetValue(m_ActiveSurfaceScaleId, out Color defaultBaseColor) &&
                 ColorDifference(m_ActiveSurfaceBaseColorCurrent, defaultBaseColor) < 0.0001f)
                 m_SurfaceBaseColors.Remove(m_ActiveSurfaceScaleId);
@@ -2134,7 +2138,7 @@ namespace AutomaticTextureReplacer
 
         private static SurfacePreview CreateSurfacePreview(Texture source)
         {
-            string thumbnail = CaptureTexturePreview(source, 128);
+            string thumbnail = CaptureTexturePreview(source, 128, cropToTopLeftQuarter: true);
             string tooltip = CaptureTexturePreview(source, 384);
             return new SurfacePreview { Thumbnail = thumbnail, TooltipThumbnail = tooltip ?? thumbnail };
         }
@@ -2261,7 +2265,7 @@ namespace AutomaticTextureReplacer
             }
         }
 
-        private static string CaptureTexturePreview(Texture source, int size)
+        private static string CaptureTexturePreview(Texture source, int size, bool cropToTopLeftQuarter = false)
         {
             if (source == null) return null;
             RenderTexture renderTarget = null;
@@ -2270,7 +2274,17 @@ namespace AutomaticTextureReplacer
             try
             {
                 renderTarget = RenderTexture.GetTemporary(size, size, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
-                Graphics.Blit(source, renderTarget);
+                if (cropToTopLeftQuarter)
+                {
+                    // Generate a sharp thumbnail directly from the source texture's
+                    // upper-left UV quadrant. Scaling an already downsampled thumbnail
+                    // in the UI would blur it and can distort its aspect ratio.
+                    Graphics.Blit(source, renderTarget, new Vector2(0.5f, 0.5f), Vector2.zero);
+                }
+                else
+                {
+                    Graphics.Blit(source, renderTarget);
+                }
                 RenderTexture.active = renderTarget;
                 readback = new Texture2D(size, size, TextureFormat.RGBA32, false, false);
                 readback.ReadPixels(new Rect(0, 0, size, size), 0, 0, false);
@@ -2398,6 +2412,7 @@ namespace AutomaticTextureReplacer
                         ["menuPath"] = menuPath,
                         ["isMod"] = isMod.ToString(),
                         ["customTexture"] = isCustomSurface.ToString(),
+                        ["transparentSurface"] = isTransparentSurface.ToString(),
                     };
                     catalog.Add(catalogEntry);
                     if (!isTransparentSurface && !isCustomSurface)
