@@ -12,6 +12,8 @@ dotnet build .\ReplacementSolutions.sln -c Release
 
 The Release build deploys the mod to the game's local Mods directory. Settings are stored in `ReplacementSolutions.coc` in the Cities: Skylines II user data directory. An existing `AutomaticTextureReplacer.coc` is copied on first launch; rules are cleared because the transparent surface has a new internal ID.
 
+See [PROJECT_GUIDE.md](PROJECT_GUIDE.md) for a map of the source files and their responsibilities.
+
 ## Publishing
 
 VS Code tasks are available for the first Paradox Mods publication, a new version, and listing updates. Set the mod ID in `ReplacementSolutions/Properties/PublishConfiguration.xml` before updating an existing listing.
