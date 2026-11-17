@@ -150,6 +150,7 @@ namespace AutomaticTextureReplacer
         private readonly List<PendingConstructionBatchRefresh> m_PendingConstructionBatchRefreshes = new List<PendingConstructionBatchRefresh>();
         private readonly Dictionary<Entity, TemporaryPreviewReplacementTrace> m_TemporaryPreviewReplacementTraces = new Dictionary<Entity, TemporaryPreviewReplacementTrace>();
         private readonly Dictionary<Entity, Entity> m_ReplacementMaterialSources = new Dictionary<Entity, Entity>();
+        private readonly Dictionary<Entity, int> m_EffectiveDecalLayerMasks = new Dictionary<Entity, int>();
         private readonly HashSet<Entity> m_LoggedConstructionGeometry = new HashSet<Entity>();
         private readonly HashSet<Entity> m_ProcessedCreatedSurfaceAreas = new HashSet<Entity>();
         private readonly HashSet<Entity> m_QueuedConstructionSurfaceAreas = new HashSet<Entity>();
@@ -594,7 +595,6 @@ namespace AutomaticTextureReplacer
             {
                 m_ConstructionRefreshGeneration = generation;
                 m_PendingConstructionBatchRefreshes.Clear();
-                Mod.Log.Info("Discarded stale automatic construction replacements after rules changed");
             }
 
             ProcessPendingRevertRefresh();

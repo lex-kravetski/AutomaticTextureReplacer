@@ -36,6 +36,16 @@ namespace AutomaticTextureReplacer
         private ValueBinding<string> m_ActiveMainTab;
         private ValueBinding<bool> m_AlsoNewSurfaceBuildings;
         private ValueBinding<bool> m_AlsoNewIndustryAreas;
+        private ValueBinding<bool> m_AlsoNewRoads;
+        private ValueBinding<string> m_RoadRulesJson;
+        private ValueBinding<string> m_RoadCatalog;
+        private ValueBinding<bool> m_RoadPickerOpen;
+        private ValueBinding<string> m_RoadPickerContext;
+        private ValueBinding<string> m_RoadPickerCollapsedGroups;
+        private ValueBinding<int> m_RoadPickerX;
+        private ValueBinding<int> m_RoadPickerY;
+        private ValueBinding<int> m_RoadPickerWidth;
+        private ValueBinding<int> m_RoadPickerHeight;
         private ValueBinding<bool> m_ShowInGameSurfacesAsTargets;
         private ValueBinding<bool> m_ShowSpecialIndustrySurfacesAsTargets;
         private ValueBinding<bool> m_ShowModSurfacesAsSources;
@@ -79,6 +89,8 @@ namespace AutomaticTextureReplacer
         private ValueBinding<int> m_SurfaceScaleEditorY;
         private ValueBinding<string> m_SurfaceScaleEditorOrigin;
         private EntityQuery m_SurfaceQuery;
+        private EntityQuery m_RoadPrefabQuery;
+        private string m_LastRoadCatalog;
         private EntityQuery m_SurfaceScaleInstancesQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
@@ -87,13 +99,13 @@ namespace AutomaticTextureReplacer
         private bool? m_LastShowRevertAllButton;
         private bool? m_LastShowSurfaceBaseColorSettings;
         private bool m_SurfaceCatalogBuildStarted;
+        private int m_LastCatalogSurfacePrefabCount = -1;
+        private int m_CatalogSurfacePrefabStableFrames;
         private Entity m_TransparentSurfaceEntity;
         private bool m_TransparentSurfaceInitializationAttempted;
         private AreaBatchSystem m_AreaBatchSystem;
         private Task<string> m_SurfaceCatalogBuildTask;
         private Task<string> m_AreaCatalogBuildTask;
-        private int m_SurfaceCatalogSurfaceCount;
-        private int m_SurfaceCatalogModSurfaceCount;
         private int m_AreaCatalogIndustryCount;
         private bool m_CustomTextureScanStarted;
         private Task<List<CustomTextureFile>> m_CustomTextureScanTask;
@@ -127,7 +139,6 @@ namespace AutomaticTextureReplacer
         private bool m_RestorePickerOnNextToolbarOpen;
         private readonly Dictionary<int, SurfacePreview> m_SurfacePreviewCache = new Dictionary<int, SurfacePreview>();
         private readonly Dictionary<string, SurfacePreview> m_SurfaceAssetPreviewCache = new Dictionary<string, SurfacePreview>(StringComparer.Ordinal);
-        private int m_CustomTextureRegisteredCount;
         private ILocalAssetDatabase m_CustomTextureAssetDatabase;
         private Task m_CustomTextureAssetDatabaseRegistrationTask;
         private bool m_CustomTextureAssetDatabaseReady;
@@ -210,6 +221,16 @@ namespace AutomaticTextureReplacer
                 "replacementsolutions",
                 "alsoNewIndustryAreas",
                 settings?.AlsoNewIndustryAreas ?? false));
+            AddBinding(m_AlsoNewRoads = new ValueBinding<bool>("replacementsolutions", "alsoNewRoads", settings?.AlsoNewRoads ?? false));
+            AddBinding(m_RoadRulesJson = new ValueBinding<string>("replacementsolutions", "roadRulesJson", settings?.RoadRulesJson ?? "[]"));
+            AddBinding(m_RoadCatalog = new ValueBinding<string>("replacementsolutions", "roadCatalog", "[]"));
+            AddBinding(m_RoadPickerOpen = new ValueBinding<bool>("replacementsolutions", "roadPickerOpen", settings?.RoadPickerOpen ?? false));
+            AddBinding(m_RoadPickerContext = new ValueBinding<string>("replacementsolutions", "roadPickerContext", settings?.RoadPickerContextJson ?? "{}"));
+            AddBinding(m_RoadPickerCollapsedGroups = new ValueBinding<string>("replacementsolutions", "roadPickerCollapsedGroups", settings?.RoadPickerCollapsedGroupsJson ?? "{}"));
+            AddBinding(m_RoadPickerX = new ValueBinding<int>("replacementsolutions", "roadPickerX", settings?.RoadPickerX ?? -1));
+            AddBinding(m_RoadPickerY = new ValueBinding<int>("replacementsolutions", "roadPickerY", settings?.RoadPickerY ?? -1));
+            AddBinding(m_RoadPickerWidth = new ValueBinding<int>("replacementsolutions", "roadPickerWidth", settings?.RoadPickerWidth ?? -1));
+            AddBinding(m_RoadPickerHeight = new ValueBinding<int>("replacementsolutions", "roadPickerHeight", settings?.RoadPickerHeight ?? -1));
             AddBinding(m_ShowInGameSurfacesAsTargets = new ValueBinding<bool>(
                 "replacementsolutions",
                 "showInGameSurfacesAsTargets",
@@ -299,6 +320,7 @@ namespace AutomaticTextureReplacer
                         ComponentType.ReadOnly<AreaData>(),
                     },
                 });
+            m_RoadPrefabQuery = GetEntityQuery(ComponentType.ReadOnly<PrefabData>(), ComponentType.ReadOnly<NetGeometryData>());
             m_SurfaceScaleInstancesQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -340,6 +362,15 @@ namespace AutomaticTextureReplacer
             AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewIndustryAreas", SetAlsoNewIndustryAreas));
             AddBinding(new TriggerBinding("replacementsolutions", "revertAllSurfaces", RevertAllSurfaces));
             AddBinding(new TriggerBinding("replacementsolutions", "revertAllAreas", () => SurfaceReplacementSystem.QueueAreaRevertAll()));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "saveRoadRules", SetRoadRulesJson));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "openRoadPicker", OpenRoadPicker));
+            AddBinding(new TriggerBinding("replacementsolutions", "closeRoadPicker", CloseRoadPicker));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setRoadPickerPosition", SetRoadPickerPosition));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "setRoadPickerSize", SetRoadPickerSize));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "saveRoadPickerCollapsedGroups", SetRoadPickerCollapsedGroups));
+            AddBinding(new TriggerBinding<string>("replacementsolutions", "replaceRoads", ReplaceRoads));
+            AddBinding(new TriggerBinding("replacementsolutions", "revertAllRoads", RevertAllRoads));
+            AddBinding(new TriggerBinding<bool>("replacementsolutions", "setAlsoNewRoads", SetAlsoNewRoads));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfacePickerPosition", SetSurfacePickerPosition));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "setSurfacePickerSize", SetSurfacePickerSize));
             AddBinding(new TriggerBinding<string>("replacementsolutions", "saveSurfacePickerCollapsedGroups", SetSurfacePickerCollapsedGroups));
@@ -349,9 +380,9 @@ namespace AutomaticTextureReplacer
         {
             base.OnUpdate();
 
-            // Wait until a map has finished loading so all enabled mods have registered
-            // their prefabs. Capture game-owned data here, then sort the detached snapshot
-            // on a worker thread.
+            // The catalog can be built at the main menu once surface prefabs and custom
+            // textures are ready; only operations that touch live area batches wait for
+            // the map to finish loading.
             GameManager gameManager = GameManager.instance;
             bool mapReady = gameManager != null &&
                 !gameManager.isGameLoading &&
@@ -359,7 +390,26 @@ namespace AutomaticTextureReplacer
                 (string.Equals(gameManager.gameMode.ToString(), "Game", StringComparison.Ordinal) ||
                  string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
+            if (prefabSystem != null && !m_RoadPrefabQuery.IsEmptyIgnoreFilter)
+            {
+                string roadCatalog = BuildRoadCatalog(prefabSystem);
+                if (!string.Equals(roadCatalog, m_LastRoadCatalog, StringComparison.Ordinal))
+                {
+                    m_LastRoadCatalog = roadCatalog;
+                    m_RoadCatalog.Update(roadCatalog);
+                }
+            }
             bool prefabsReady = prefabSystem != null && !m_SurfaceQuery.IsEmptyIgnoreFilter;
+            int catalogSurfacePrefabCount = prefabsReady ? m_SurfaceQuery.CalculateEntityCount() : 0;
+            if (catalogSurfacePrefabCount != m_LastCatalogSurfacePrefabCount)
+            {
+                m_LastCatalogSurfacePrefabCount = catalogSurfacePrefabCount;
+                m_CatalogSurfacePrefabStableFrames = 0;
+            }
+            else if (prefabsReady)
+            {
+                m_CatalogSurfacePrefabStableFrames++;
+            }
             if (prefabsReady && !m_SurfaceDefaultsCaptured)
             {
                 CaptureSurfaceDefaults(prefabSystem);
@@ -379,7 +429,6 @@ namespace AutomaticTextureReplacer
                 if (m_CustomTextureScanTask.Status == TaskStatus.RanToCompletion)
                 {
                     m_CustomTextureFiles = m_CustomTextureScanTask.Result;
-                    Mod.Log.InfoFormat("Custom surface texture scan found {0} supported images", m_CustomTextureFiles.Count);
                 }
                 else
                 {
@@ -410,10 +459,11 @@ namespace AutomaticTextureReplacer
                     RegisterCustomTextures(prefabSystem, maxPerFrame: 16);
                 }
 
+                bool gameStarted = gameManager != null && !gameManager.isGameLoading;
+                bool catalogReady = mapReady || m_CatalogSurfacePrefabStableFrames >= 120;
                 if ((m_CustomTextureAssetDatabaseReady || m_CustomTextureAssetDatabaseFailed) &&
-                    mapReady && m_CustomTextureFileIndex >= m_CustomTextureFiles.Count)
+                    gameStarted && catalogReady && m_CustomTextureFileIndex >= m_CustomTextureFiles.Count)
                 {
-                    Mod.Log.InfoFormat("Custom surface registration complete: surfaces={0}", m_CustomTextureRegisteredCount);
                     StartSurfaceCatalogBuild();
                 }
             }
@@ -427,7 +477,6 @@ namespace AutomaticTextureReplacer
                         m_SurfaceCatalogEntries.Sort((first, second) =>
                             string.Compare(first["name"], second["name"], StringComparison.CurrentCultureIgnoreCase));
                     }
-                    Mod.Log.InfoFormat("Preparing texture previews before publishing surface catalog: surfaces={0}", m_SurfaceCatalogSurfaceCount);
                 }
                 else if (m_SurfaceCatalogBuildTask.IsFaulted)
                 {
@@ -442,7 +491,7 @@ namespace AutomaticTextureReplacer
                 if (m_AreaCatalogBuildTask.Status == TaskStatus.RanToCompletion)
                 {
                     m_AreaCatalog.Update(m_AreaCatalogBuildTask.Result);
-                    Mod.Log.InfoFormat("Special industry menu catalog cached after map load: entries={0}", m_AreaCatalogIndustryCount);
+                    Mod.Log.InfoFormat("Special industry menu catalog cached: entries={0}", m_AreaCatalogIndustryCount);
                 }
                 else if (m_AreaCatalogBuildTask.IsFaulted)
                 {
@@ -516,7 +565,7 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            bool anyDialogOpen = Mod.Settings.DialogOpen || Mod.Settings.SurfacePickerOpen || m_SurfaceScaleEditorIsOpen;
+            bool anyDialogOpen = Mod.Settings.DialogOpen || Mod.Settings.SurfacePickerOpen || Mod.Settings.RoadPickerOpen || m_SurfaceScaleEditorIsOpen;
             if (anyDialogOpen)
             {
                 if (m_SurfaceScaleEditorIsOpen)
@@ -524,8 +573,15 @@ namespace AutomaticTextureReplacer
                     CancelSurfaceScale();
                 }
 
-                m_RestorePickerOnNextToolbarOpen = Mod.Settings.SurfacePickerOpen;
-                CloseSurfacePicker();
+                if (Mod.Settings.RoadPickerOpen)
+                {
+                    CloseRoadPicker();
+                }
+                else
+                {
+                    m_RestorePickerOnNextToolbarOpen = Mod.Settings.SurfacePickerOpen;
+                    CloseSurfacePicker();
+                }
                 SetDialogOpen(false);
                 return;
             }
@@ -582,8 +638,10 @@ namespace AutomaticTextureReplacer
             {
                 Mod.Settings.SurfacePickerContextJson = contextJson ?? "";
                 Mod.Settings.SurfacePickerOpen = true;
+                Mod.Settings.RoadPickerOpen = false;
                 Mod.Settings.ApplyAndSave();
             }
+            m_RoadPickerOpen.Update(false);
             m_SurfacePickerContext.Update(contextJson ?? "");
             m_SurfacePickerOpen.Update(true);
         }
@@ -612,6 +670,113 @@ namespace AutomaticTextureReplacer
             Mod.Settings.AreaRulesJson = json;
             Mod.Settings.ApplyAndSave();
             m_AreaRulesJson.Update(json);
+        }
+
+        private void SetRoadRulesJson(string value)
+        {
+            if (Mod.Settings == null) return;
+            string json = string.IsNullOrWhiteSpace(value) ? "[]" : value;
+            Mod.Settings.RoadRulesJson = json;
+            Mod.Settings.ApplyAndSave();
+            m_RoadRulesJson.Update(json);
+        }
+
+        private void OpenRoadPicker(string contextJson)
+        {
+            if (Mod.Settings != null)
+            {
+                Mod.Settings.RoadPickerContextJson = contextJson ?? "{}";
+                Mod.Settings.RoadPickerOpen = true;
+                Mod.Settings.ApplyAndSave();
+            }
+            m_RoadPickerContext.Update(contextJson ?? "{}");
+            m_RoadPickerOpen.Update(true);
+        }
+
+        private void CloseRoadPicker()
+        {
+            if (Mod.Settings != null)
+            {
+                Mod.Settings.RoadPickerOpen = false;
+                Mod.Settings.ApplyAndSave();
+            }
+            m_RoadPickerOpen.Update(false);
+        }
+
+        private void SetRoadPickerPosition(string value)
+        {
+            string[] parts = value?.Split(',');
+            if (Mod.Settings == null || parts == null || parts.Length != 2 ||
+                !int.TryParse(parts[0], out int x) || !int.TryParse(parts[1], out int y)) return;
+            Mod.Settings.RoadPickerX = x;
+            Mod.Settings.RoadPickerY = y;
+            Mod.Settings.ApplyAndSave();
+            m_RoadPickerX.Update(x);
+            m_RoadPickerY.Update(y);
+        }
+
+        private void SetRoadPickerSize(string value)
+        {
+            string[] parts = value?.Split(',');
+            if (Mod.Settings == null || parts == null || parts.Length != 2 ||
+                !int.TryParse(parts[0], out int width) || !int.TryParse(parts[1], out int height)) return;
+            width = Math.Max(520, Math.Min(width, 1800));
+            height = Math.Max(360, Math.Min(height, 1300));
+            Mod.Settings.RoadPickerWidth = width;
+            Mod.Settings.RoadPickerHeight = height;
+            Mod.Settings.ApplyAndSave();
+            m_RoadPickerWidth.Update(width);
+            m_RoadPickerHeight.Update(height);
+        }
+
+        private void SetRoadPickerCollapsedGroups(string value)
+        {
+            if (Mod.Settings == null) return;
+            Mod.Settings.RoadPickerCollapsedGroupsJson = string.IsNullOrWhiteSpace(value) ? "{}" : value;
+            Mod.Settings.ApplyAndSave();
+            m_RoadPickerCollapsedGroups.Update(Mod.Settings.RoadPickerCollapsedGroupsJson);
+        }
+
+        private void ReplaceRoads(string requestedRuleId)
+        {
+            Mod.Log.InfoFormat("Road replacement stub invoked: ruleId='{0}'", requestedRuleId);
+        }
+
+        private void RevertAllRoads()
+        {
+            Mod.Log.Info("Road revert-all stub invoked");
+        }
+
+        private void SetAlsoNewRoads(bool value)
+        {
+            if (Mod.Settings == null) return;
+            Mod.Settings.AlsoNewRoads = value;
+            Mod.Settings.ApplyAndSave();
+            m_AlsoNewRoads.Update(value);
+        }
+
+        private string BuildRoadCatalog(PrefabSystem prefabSystem)
+        {
+            var entries = new List<Dictionary<string, string>>();
+            using (NativeArray<Entity> entities = m_RoadPrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (!prefabSystem.TryGetPrefab<NetGeometryPrefab>(entity, out NetGeometryPrefab prefab) || prefab == null ||
+                        !string.Equals(prefab.name, "Small Road", StringComparison.OrdinalIgnoreCase)) continue;
+                    string icon = ImageSystem.GetIcon(prefab);
+                    if (string.IsNullOrWhiteSpace(icon)) icon = ImageSystem.GetThumbnail(prefab);
+                    entries.Add(new Dictionary<string, string>
+                    {
+                        ["id"] = prefab.GetPrefabID().ToString(),
+                        ["name"] = prefab.name,
+                        ["thumbnail"] = string.IsNullOrWhiteSpace(icon) ? "Media/Placeholder.svg" : icon,
+                        ["group"] = "Roads",
+                    });
+                    break;
+                }
+            }
+            return JSON.Dump(entries);
         }
 
         private void ReplaceSurfaces(string requestedRuleId)
@@ -649,7 +814,7 @@ namespace AutomaticTextureReplacer
 
         private void SetActiveMainTab(string value)
         {
-            if (Mod.Settings == null || (value != "surfaces" && value != "areas"))
+            if (Mod.Settings == null || (value != "surfaces" && value != "areas" && value != "roads"))
             {
                 return;
             }

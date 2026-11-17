@@ -49,6 +49,33 @@ namespace AutomaticTextureReplacer
         [SettingsUIHidden]
         public bool AlsoNewIndustryAreas { get; set; }
 
+        [SettingsUIHidden]
+        public bool AlsoNewRoads { get; set; }
+
+        [SettingsUIHidden]
+        public string RoadRulesJson { get; set; } = "[]";
+
+        [SettingsUIHidden]
+        public bool RoadPickerOpen { get; set; }
+
+        [SettingsUIHidden]
+        public string RoadPickerContextJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
+        public string RoadPickerCollapsedGroupsJson { get; set; } = "{}";
+
+        [SettingsUIHidden]
+        public int RoadPickerX { get; set; } = -1;
+
+        [SettingsUIHidden]
+        public int RoadPickerY { get; set; } = -1;
+
+        [SettingsUIHidden]
+        public int RoadPickerWidth { get; set; } = -1;
+
+        [SettingsUIHidden]
+        public int RoadPickerHeight { get; set; } = -1;
+
         // Kept to migrate saves written before the automatic setting was split by tab.
         [SettingsUIHidden]
         public bool AlsoNewBuildings { get; set; }
@@ -152,6 +179,15 @@ namespace AutomaticTextureReplacer
             ActiveMainTab = "surfaces";
             AlsoNewSurfaceBuildings = false;
             AlsoNewIndustryAreas = false;
+            AlsoNewRoads = false;
+            RoadRulesJson = "[]";
+            RoadPickerOpen = false;
+            RoadPickerContextJson = "{}";
+            RoadPickerCollapsedGroupsJson = "{}";
+            RoadPickerX = -1;
+            RoadPickerY = -1;
+            RoadPickerWidth = -1;
+            RoadPickerHeight = -1;
             AlsoNewBuildings = false;
         }
     }

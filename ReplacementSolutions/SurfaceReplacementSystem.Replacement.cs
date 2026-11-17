@@ -551,6 +551,10 @@ namespace AutomaticTextureReplacer
             }
 
             m_ReplacementMaterialSources[targetPrefab] = sourcePrefab;
+            int sourceDecalLayerMask = m_EffectiveDecalLayerMasks.TryGetValue(sourcePrefab, out int effectiveSourceMask)
+                ? effectiveSourceMask
+                : (int)sourceRendered.m_DecalLayerMask;
+            m_EffectiveDecalLayerMasks[targetPrefab] = sourceDecalLayerMask;
 
             int batchIndex = EntityManager.GetComponentData<RenderedAreaData>(targetPrefab).m_BatchIndex;
             if (!m_AreaBatchSystem.GetAreaBatch(batchIndex, out _, out _, out _, out UnityEngine.Material material, out _, out _, out _) ||
@@ -584,7 +588,7 @@ namespace AutomaticTextureReplacer
             bool hasDecalLayerMask = material.HasProperty(decalLayerMask);
             if (hasDecalLayerMask)
             {
-                material.SetFloat(decalLayerMask, math.asfloat((int)sourceRendered.m_DecalLayerMask));
+                material.SetFloat(decalLayerMask, math.asfloat(sourceDecalLayerMask));
             }
 
             m_AppliedReplacementMaterials[targetPrefab] = material;
@@ -593,9 +597,9 @@ namespace AutomaticTextureReplacer
                 target != null && target.TryGet<RenderedArea>(out RenderedArea targetRendered) && targetRendered != null)
             {
                 Mod.Log.InfoFormat(
-                    "Copied source surface decal layer mask: source='{0}', mask={1}; target='{2}', previousMask={3}, materialHasMask={4}, batch={5}",
+                    "Copied source surface decal layer mask: source='{0}', effectiveMask=0x{1:X}, target='{2}', previousMask={3}, materialHasMask={4}, batch={5}",
                     m_PrefabSystem.GetPrefabName(sourcePrefab),
-                    sourceRendered.m_DecalLayerMask,
+                    sourceDecalLayerMask,
                     m_PrefabSystem.GetPrefabName(targetPrefab),
                     targetRendered.m_DecalLayerMask,
                     hasDecalLayerMask,

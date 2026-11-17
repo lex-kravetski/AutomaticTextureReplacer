@@ -218,7 +218,6 @@ namespace AutomaticTextureReplacer
                         Thumbnail = preview.Thumbnail,
                         TooltipThumbnail = preview.TooltipThumbnail,
                     };
-                    m_CustomTextureRegisteredCount++;
                 }
                 catch (Exception exception)
                 {
@@ -309,14 +308,6 @@ namespace AutomaticTextureReplacer
             GameManager.instance?.localizationManager?.AddSource(localeId, new CustomSurfaceNameLocale(
                 "Assets.NAME[" + custom.name + "]",
                 file.RootFolder + " - " + file.DisplayName));
-            if (surfaceCategory != null)
-            {
-                Mod.Log.InfoFormat(
-                    "Custom surface added to game menu: surface='{0}', menu='{1}', category='{2}'",
-                    custom.name,
-                    surfaceCategory.m_Menu != null ? surfaceCategory.m_Menu.name : "<no menu>",
-                    surfaceCategory.name);
-            }
             return surfaceEntity != Entity.Null;
         }
 
@@ -551,10 +542,6 @@ namespace AutomaticTextureReplacer
             {
                 m_SurfaceCatalog.Update(JSON.Dump(m_SurfaceCatalogEntries));
                 m_SurfaceCatalogPublished = true;
-                Mod.Log.InfoFormat(
-                    "Surface catalog published after texture previews: surfaces={0}, modSurfaces={1}",
-                    m_SurfaceCatalogSurfaceCount,
-                    m_SurfaceCatalogModSurfaceCount);
             }
         }
 
@@ -726,7 +713,7 @@ namespace AutomaticTextureReplacer
             }
 
             Mod.Log.InfoFormat(
-                "Surface catalog snapshot captured after map load: surfaces={0}, modSurfaces={1}, menuRegisteredSurfaces={2}, surfacesWithoutMenuSkipped={3}, queriedPrefabs={4}, treeSuppressionFlagsAdded={5}, anarchyEnabled={6}",
+                "Surface catalog snapshot captured: surfaces={0}, modSurfaces={1}, menuRegisteredSurfaces={2}, surfacesWithoutMenuSkipped={3}, queriedPrefabs={4}, treeSuppressionFlagsAdded={5}, anarchyEnabled={6}",
                 catalog.Count,
                 modSurfaceCount,
                 surfaceMenuPaths.Count,
@@ -734,8 +721,6 @@ namespace AutomaticTextureReplacer
                 m_SurfaceQuery.CalculateEntityCount(),
                 surfacesWithTreeSuppression,
                 !shouldSuppressTrees);
-            m_SurfaceCatalogSurfaceCount = catalog.Count;
-            m_SurfaceCatalogModSurfaceCount = modSurfaceCount;
             m_SurfaceCatalogEntries = catalog;
             m_SurfaceCatalogBuildTask = Task.Run(() => catalog
                 .OrderBy(item => item["name"], StringComparer.CurrentCultureIgnoreCase)

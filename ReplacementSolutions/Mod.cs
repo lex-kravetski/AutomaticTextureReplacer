@@ -57,6 +57,7 @@ namespace AutomaticTextureReplacer
             }
 
             updateSystem.UpdateAt<ReplacementSolutionsUISystem>(SystemUpdatePhase.UIUpdate);
+            updateSystem.UpdateAt<SmallRoadPrefabDumpSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateBefore<SurfaceReplacementSystem, ToolOutputBarrier>(SystemUpdatePhase.ToolUpdate);
             updateSystem.UpdateBefore<NewBuildingSurfaceReplacementSystem, GenerateAreasSystem>(SystemUpdatePhase.Modification1);
         }

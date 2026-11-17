@@ -127,6 +127,15 @@ const register = (moduleRegistry) => {
   const FocusDisabled = moduleRegistry.get("game-ui/common/focus/focus-key.ts", "FOCUS_DISABLED");
   const surfaceCatalog$ = bindValue("replacementsolutions", "surfaceCatalog", "[]");
   const areaCatalog$ = bindValue("replacementsolutions", "areaCatalog", "[]");
+  const roadCatalog$ = bindValue("replacementsolutions", "roadCatalog", "[]");
+  const roadRulesJson$ = bindValue("replacementsolutions", "roadRulesJson", "[]");
+  const roadPickerOpen$ = bindValue("replacementsolutions", "roadPickerOpen", false);
+  const roadPickerContext$ = bindValue("replacementsolutions", "roadPickerContext", "{}");
+  const roadPickerCollapsedGroups$ = bindValue("replacementsolutions", "roadPickerCollapsedGroups", "{}");
+  const roadPickerX$ = bindValue("replacementsolutions", "roadPickerX", -1);
+  const roadPickerY$ = bindValue("replacementsolutions", "roadPickerY", -1);
+  const roadPickerWidth$ = bindValue("replacementsolutions", "roadPickerWidth", -1);
+  const roadPickerHeight$ = bindValue("replacementsolutions", "roadPickerHeight", -1);
   const surfacePickerOpen$ = bindValue("replacementsolutions", "surfacePickerOpen", false);
   const surfacePickerCollapsedGroups$ = bindValue("replacementsolutions", "surfacePickerCollapsedGroups", "{}");
   const surfacePickerX$ = bindValue("replacementsolutions", "surfacePickerX", -1);
@@ -139,6 +148,7 @@ const register = (moduleRegistry) => {
   const activeMainTab$ = bindValue("replacementsolutions", "activeMainTab", "surfaces");
   const alsoNewSurfaceBuildings$ = bindValue("replacementsolutions", "alsoNewSurfaceBuildings", false);
   const alsoNewIndustryAreas$ = bindValue("replacementsolutions", "alsoNewIndustryAreas", false);
+  const alsoNewRoads$ = bindValue("replacementsolutions", "alsoNewRoads", false);
   const showInGameSurfacesAsTargets$ = bindValue("replacementsolutions", "showInGameSurfacesAsTargets", false);
   const showSpecialIndustrySurfacesAsTargets$ = bindValue("replacementsolutions", "showSpecialIndustrySurfacesAsTargets", false);
   const showModSurfacesAsSources$ = bindValue("replacementsolutions", "showModSurfacesAsSources", false);
@@ -523,8 +533,55 @@ const register = (moduleRegistry) => {
       thumbnails.map((src, index) => h("img", { key: `${index}-${src}`, src, loading: "eager", alt: "" })));
   };
 
+  const RoadRuleRow = React.memo(({ rule, deleteRule, setRuleEnabled, roadCatalogById, surfaceCatalogById, openSurfacePicker, scaledFontSize, rowIndex }) => {
+    const openRoadPicker = (side) => trigger("replacementsolutions", "openRoadPicker", JSON.stringify({
+      rowId: rule.id,
+      side,
+      kind: "roads",
+      selectedIds: rule.sourceRoadIds || [],
+    }));
+    const roadIcons = () => {
+      const ids = rule.sourceRoadIds || [];
+      return h("div", { className: "atrSurfaceGroup atrRuleSurfaceCell" },
+        h("div", { className: "atrRuleEditCell" }, createButton("Edit", () => openRoadPicker("source"), {
+          variant: "primary", className: "atrEditButton", fontSize: scaledFontSize, style: BUTTON_STYLE.standard,
+          title: "Edit source roads",
+        })),
+        h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, ids.map((id) => {
+          const road = roadCatalogById.get(id);
+          return road ? h("div", { key: id, className: "atrRuleSurfaceIconFrame", title: road.name },
+            h("img", { className: "atrRuleSurfaceIcon", src: road.thumbnail, alt: road.name })) : null;
+        }))));
+    };
+    const checkbox = GameCheckbox
+      ? h(GameCheckbox, { checked: rule.enabled, focusKey: FocusDisabled, className: "atrRuleCheckbox", style: { width: "38rem", height: "38rem" }, onChange: (enabled) => setRuleEnabled(rule.id, enabled) })
+      : h("span", null, rule.enabled ? "✓" : "");
+    return h("div", { className: "atrRuleRow" + (rowIndex % 2 ? " atrRuleRowAlternate" : "") },
+      h("div", { className: "atrRuleLeftCell" }, checkbox, roadIcons()),
+      h("div", { className: "atrSurfaceGroup atrRuleSurfaceCell" },
+        h("div", { className: "atrRuleEditCell" }, createButton("Edit", () => openSurfacePicker(rule, "target", "roads"), {
+          variant: "primary", className: "atrEditButton", fontSize: scaledFontSize, style: BUTTON_STYLE.standard,
+          title: "Edit replacement surfaces",
+        })),
+        h("div", { className: "atrRuleTileCell" }, h("div", { className: "atrRuleSurfaceIcons" }, (rule.targetSurfaceIds || []).map((id) => {
+          const surface = surfaceCatalogById.get(id);
+          return surface ? h("div", { key: id, className: "atrRuleSurfaceIconFrame", title: surface.name },
+            h("img", { className: "atrRuleSurfaceIcon", src: surface.thumbnail, alt: surface.name })) : null;
+        })))),
+      h("div", { className: "atrRuleActions" },
+        createButton("Replace", () => trigger("replacementsolutions", "replaceRoads", String(rule.id)), {
+          variant: "primary", title: "Replace this road rule", className: "atrReplaceButton", fontSize: scaledFontSize, style: BUTTON_STYLE.standard,
+        }),
+        createButton("×", () => deleteRule(rule.id), {
+          variant: "primary", title: "Delete rule", className: "atrDeleteRuleButton", fontSize: scaledFontSize, style: BUTTON_STYLE.standard,
+        })));
+  });
+
   const SurfacePicker = () => {
-    const open = useValue(surfacePickerOpen$);
+    const surfaceOpen = useValue(surfacePickerOpen$);
+    const roadsOpen = useValue(roadPickerOpen$);
+    const open = surfaceOpen || roadsOpen;
+    const isRoadPicker = roadsOpen;
     const scaleEditorOpen = useValue(surfaceScaleEditorOpen$);
     const scaleEditorOrigin = useValue(surfaceScaleEditorOrigin$);
     const surfaceParameters = {
@@ -535,20 +592,34 @@ const register = (moduleRegistry) => {
       edgeNoiseScales: readParameterMap(useValue(surfaceEdgeNoiseScalesJson$)),
       baseColors: readParameterMap(useValue(surfaceBaseColorsJson$)),
     };
-    const collapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
-    const savedX = useValue(surfacePickerX$);
-    const savedY = useValue(surfacePickerY$);
-    const savedWidth = useValue(surfacePickerWidth$);
-    const savedHeight = useValue(surfacePickerHeight$);
+    const surfaceCollapsedGroupsJson = useValue(surfacePickerCollapsedGroups$);
+    const roadCollapsedGroupsJson = useValue(roadPickerCollapsedGroups$);
+    const surfaceX = useValue(surfacePickerX$);
+    const surfaceY = useValue(surfacePickerY$);
+    const surfaceWidth = useValue(surfacePickerWidth$);
+    const surfaceHeight = useValue(surfacePickerHeight$);
+    const roadX = useValue(roadPickerX$);
+    const roadY = useValue(roadPickerY$);
+    const roadWidth = useValue(roadPickerWidth$);
+    const roadHeight = useValue(roadPickerHeight$);
+    const collapsedGroupsJson = isRoadPicker ? roadCollapsedGroupsJson : surfaceCollapsedGroupsJson;
+    const savedX = isRoadPicker ? roadX : surfaceX;
+    const savedY = isRoadPicker ? roadY : surfaceY;
+    const savedWidth = isRoadPicker ? roadWidth : surfaceWidth;
+    const savedHeight = isRoadPicker ? roadHeight : surfaceHeight;
     const fontSize = useValue(dialogFontSize$);
     const showInGameSurfacesAsTargets = useValue(showInGameSurfacesAsTargets$);
     const showSpecialIndustrySurfacesAsTargets = useValue(showSpecialIndustrySurfacesAsTargets$);
     const showModSurfacesAsSources = useValue(showModSurfacesAsSources$);
     const catalogJson = useValue(surfaceCatalog$);
+    const roadCatalogJson = useValue(roadCatalog$);
     const areaCatalogJson = useValue(areaCatalog$);
-    const contextJson = useValue(surfacePickerContext$);
+    const surfaceContextJson = useValue(surfacePickerContext$);
+    const roadContextJson = useValue(roadPickerContext$);
+    const contextJson = isRoadPicker ? roadContextJson : surfaceContextJson;
     const rulesJson = useValue(rulesJson$);
     const areaRulesJson = useValue(areaRulesJson$);
+    const roadsRulesJson = useValue(roadRulesJson$);
     const [selectedIds, setSelectedIds] = React.useState(() => new Set());
     const [collapsedGroups, setCollapsedGroups] = React.useState({});
     const [filterText, setFilterText] = React.useState("");
@@ -565,6 +636,10 @@ const register = (moduleRegistry) => {
         return [];
       }
     }, [catalogJson]);
+    const roadCatalog = React.useMemo(() => {
+      try { return JSON.parse(roadCatalogJson || "[]"); }
+      catch (error) { console.error("[ReplacementSolutions] Invalid road catalog", error); return []; }
+    }, [roadCatalogJson]);
     const areaCatalog = React.useMemo(() => {
       try {
         return JSON.parse(areaCatalogJson || "[]");
@@ -583,6 +658,7 @@ const register = (moduleRegistry) => {
     }, [contextJson]);
     const targetPicker = pickerContext.side === "target";
     const pickerCatalog = React.useMemo(() => {
+      if (isRoadPicker && pickerContext.side === "source") return roadCatalog;
       if (pickerContext.kind === "areas" && !targetPicker) return areaCatalog;
       if (targetPicker) {
         return catalog.filter((surface) => {
@@ -600,7 +676,7 @@ const register = (moduleRegistry) => {
           (surface.isMod !== true && surface.isMod !== "True") || selectedIds.has(surface.id));
       }
       return catalog;
-    }, [catalog, areaCatalog, pickerContext.kind, targetPicker, showInGameSurfacesAsTargets, showSpecialIndustrySurfacesAsTargets, showModSurfacesAsSources, selectedIds]);
+    }, [catalog, roadCatalog, areaCatalog, isRoadPicker, pickerContext.kind, pickerContext.side, targetPicker, showInGameSurfacesAsTargets, showSpecialIndustrySurfacesAsTargets, showModSurfacesAsSources, selectedIds]);
     const groups = React.useMemo(() => {
       const grouped = new Map();
       pickerCatalog.forEach((surface) => {
@@ -662,7 +738,7 @@ const register = (moduleRegistry) => {
         const x = Math.max(0, Math.round(rect.left + e.clientX - startX));
         const y = Math.max(0, Math.round(rect.top + e.clientY - startY));
         setDragPosition({ x, y });
-        trigger("replacementsolutions", "setSurfacePickerPosition", x + "," + y);
+        trigger("replacementsolutions", isRoadPicker ? "setRoadPickerPosition" : "setSurfacePickerPosition", x + "," + y);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -691,9 +767,9 @@ const register = (moduleRegistry) => {
         if (fromLeft) {
           const x = Math.max(0, Math.round(startLeft + startWidth - width));
           setDragPosition((current) => ({ ...(current || position), x }));
-          trigger("replacementsolutions", "setSurfacePickerPosition", x + "," + position.y);
+          trigger("replacementsolutions", isRoadPicker ? "setRoadPickerPosition" : "setSurfacePickerPosition", x + "," + position.y);
         }
-        trigger("replacementsolutions", "setSurfacePickerSize", width + "," + height);
+        trigger("replacementsolutions", isRoadPicker ? "setRoadPickerSize" : "setSurfacePickerSize", width + "," + height);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", end);
@@ -707,21 +783,23 @@ const register = (moduleRegistry) => {
         ? createButton(label, onSelect, { ...options, variant })
         : createTintedPrimaryButton(label, onSelect, options);
     };
-    const closePicker = () => trigger("replacementsolutions", "closeSurfacePicker");
+    const closePicker = () => trigger("replacementsolutions", isRoadPicker ? "closeRoadPicker" : "closeSurfacePicker");
     const applySelection = () => {
       const selectedIdsArray = Array.from(selectedIds);
-        const sideProperty = pickerContext.side === "target"
-          ? "targetSurfaceIds"
-          : pickerContext.kind === "areas" ? "sourceAreaIds" : "sourceSurfaceIds";
-        const sourceJson = pickerContext.kind === "areas" ? areaRulesJson : rulesJson;
+      const isRoadRulesContext = pickerContext.kind === "roads";
+      const sideProperty = pickerContext.side === "target"
+        ? "targetSurfaceIds"
+        : isRoadRulesContext ? "sourceRoadIds" : pickerContext.kind === "areas" ? "sourceAreaIds" : "sourceSurfaceIds";
+      const sourceJson = isRoadRulesContext ? roadsRulesJson : pickerContext.kind === "areas" ? areaRulesJson : rulesJson;
       try {
         const rules = JSON.parse(sourceJson || "[]");
         const updatedRules = rules.map((rule) => String(rule.id) === String(pickerContext.rowId)
           ? { ...rule, [sideProperty]: selectedIdsArray }
           : rule);
-        trigger("replacementsolutions", pickerContext.kind === "areas" ? "saveAreaRules" : "saveRules", JSON.stringify(updatedRules));
+        const saveTrigger = isRoadRulesContext ? "saveRoadRules" : pickerContext.kind === "areas" ? "saveAreaRules" : "saveRules";
+        trigger("replacementsolutions", saveTrigger, JSON.stringify(updatedRules));
       } catch (error) {
-        console.error("[ReplacementSolutions] Failed to apply surface selection", error);
+        console.error("[ReplacementSolutions] Failed to apply picker selection", error);
       }
       closePicker();
     };
@@ -766,16 +844,19 @@ const register = (moduleRegistry) => {
       const next = {};
       groups.forEach((group) => { next[group.name] = collapsed; });
       setCollapsedGroups(next);
-      trigger("replacementsolutions", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
+      trigger("replacementsolutions", isRoadPicker ? "saveRoadPickerCollapsedGroups" : "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
     };
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
-      const tooltip = makeSurfaceTooltip(surface, false, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) });
+      const tooltip = isRoadPicker
+        ? h("div", { className: "atrSurfaceTooltip" }, h("strong", null, surface.name))
+        : makeSurfaceTooltip(surface, false, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) });
       const tileContents = h(React.Fragment, null,
         h("img", { src: surface.thumbnail, alt: surface.name }),
-        colorStringToCss(surfaceParameters.baseColors?.[surface.id]) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) } }) : null,
-        hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
+        !isRoadPicker && colorStringToCss(surfaceParameters.baseColors?.[surface.id]) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) } }) : null,
+        !isRoadPicker && hasCustomSurfaceParameters(surface.id, surfaceParameters) ? scaleBadge(true) : null);
       const handleScale = (event) => {
+        if (isRoadPicker) return;
         event.preventDefault();
         event.stopPropagation();
         trigger("replacementsolutions", "openSurfaceScaleEditor", `${surface.id},${Math.round(event.clientX)},${Math.round(event.clientY)},picker`);
@@ -817,7 +898,7 @@ const register = (moduleRegistry) => {
       const toggle = () => {
         const next = { ...collapsedGroups, [group.name]: !collapsedGroups[group.name] };
         setCollapsedGroups(next);
-        trigger("replacementsolutions", "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
+        trigger("replacementsolutions", isRoadPicker ? "saveRoadPickerCollapsedGroups" : "saveSurfacePickerCollapsedGroups", JSON.stringify(next));
       };
       const groupToggle = h("div", {
         className: "atrPickerGroupToggle",
@@ -878,7 +959,7 @@ const register = (moduleRegistry) => {
       groupControls,
       filterControl,
       groups.length === 0
-        ? h("div", { className: "atrPickerEmpty" }, pickerContext.kind === "areas" && pickerContext.side === "source" ? "No special industries found." : "No surfaces found.")
+        ? h("div", { className: "atrPickerEmpty" }, isRoadPicker ? "No roads found." : pickerContext.kind === "areas" && pickerContext.side === "source" ? "No special industries found." : "No surfaces found.")
         : h(ui.Scrollable || "div", { className: "atrPickerScroll", vertical: true, useNewStyle: true },
           h("div", { className: "atrPickerGroups" }, sections)),
       footer);
@@ -892,7 +973,7 @@ const register = (moduleRegistry) => {
         className: "atrPickerPanel",
         contentClassName: "atrPickerPanelContent",
       header: h("div", { className: "atrDialogHeader atrPickerHeader", onMouseDownCapture: beginDrag },
-        pickerContext.kind === "areas" && pickerContext.side === "source" ? "Select a special industry" : "Select a surface"),
+        isRoadPicker ? "Select a road" : pickerContext.kind === "areas" && pickerContext.side === "source" ? "Select a special industry" : "Select a surface"),
         onClose: closePicker,
       }, body), resizeCorners);
   };
@@ -907,12 +988,15 @@ const register = (moduleRegistry) => {
     const savedHeight = useValue(dialogHeight$);
     const fontSize = useValue(dialogFontSize$);
     const showRevertAllButton = useValue(showRevertAllButton$);
+    const alsoNewRoads = useValue(alsoNewRoads$);
     const replacementScope = useValue(replacementScope$);
     const savedActiveTab = useValue(activeMainTab$);
     const alsoNewSurfaceBuildings = useValue(alsoNewSurfaceBuildings$);
     const alsoNewIndustryAreas = useValue(alsoNewIndustryAreas$);
     const rulesJson = useValue(rulesJson$);
     const areaRulesJson = useValue(areaRulesJson$);
+    const roadsRulesJson = useValue(roadRulesJson$);
+    const roadCatalogJson = useValue(roadCatalog$);
     const catalogJson = useValue(surfaceCatalog$);
     const areaCatalogJson = useValue(areaCatalog$);
     const surfaceParameters = {
@@ -933,9 +1017,11 @@ const register = (moduleRegistry) => {
     const [size, setSize] = React.useState(null);
     const [rules, setRules] = React.useState([]);
     const [areaRules, setAreaRules] = React.useState([]);
-    const [activeTab, setActiveTab] = React.useState(savedActiveTab === "areas" ? "areas" : "surfaces");
+    const [roadRules, setRoadRules] = React.useState([]);
+    const roadRulesRef = React.useRef([]);
+    const [activeTab, setActiveTab] = React.useState(["areas", "roads"].includes(savedActiveTab) ? savedActiveTab : "surfaces");
     React.useEffect(() => {
-      setActiveTab(savedActiveTab === "areas" ? "areas" : "surfaces");
+      setActiveTab(["areas", "roads"].includes(savedActiveTab) ? savedActiveTab : "surfaces");
     }, [savedActiveTab]);
     const catalog = React.useMemo(() => {
       try {
@@ -955,6 +1041,11 @@ const register = (moduleRegistry) => {
       }
     }, [areaCatalogJson]);
     const areaCatalogById = React.useMemo(() => new Map(areaCatalog.map((industry) => [industry.id, industry])), [areaCatalog]);
+    const roadCatalog = React.useMemo(() => {
+      try { return JSON.parse(roadCatalogJson || "[]"); }
+      catch (error) { console.error("[ReplacementSolutions] Invalid road catalog", error); return []; }
+    }, [roadCatalogJson]);
+    const roadCatalogById = React.useMemo(() => new Map(roadCatalog.map((road) => [road.id, road])), [roadCatalog]);
     React.useEffect(() => {
       try {
         const loaded = JSON.parse(rulesJson || "[]");
@@ -995,6 +1086,20 @@ const register = (moduleRegistry) => {
         setAreaRules([]);
       }
     }, [areaRulesJson]);
+    React.useEffect(() => {
+      try {
+        const loaded = JSON.parse(roadsRulesJson || "[]");
+        const normalized = Array.isArray(loaded) ? loaded.map((rule, index) => ({
+          id: rule.id ?? index + 1,
+          enabled: rule.enabled !== false,
+          sourceRoadIds: Array.isArray(rule.sourceRoadIds) ? rule.sourceRoadIds : [],
+          targetSurfaceIds: Array.isArray(rule.targetSurfaceIds) ? rule.targetSurfaceIds : [],
+        })) : [];
+        roadRulesRef.current = normalized;
+        setRoadRules(normalized);
+        nextRuleId.current = Math.max(nextRuleId.current, normalized.reduce((highest, rule) => Number.isFinite(Number(rule.id)) ? Math.max(highest, Number(rule.id)) : highest, 0) + 1);
+      } catch (error) { console.error("[ReplacementSolutions] Invalid saved road rules", error); roadRulesRef.current = []; setRoadRules([]); }
+    }, [roadsRulesJson]);
     const persistRules = React.useCallback((nextRules) => {
       rulesRef.current = nextRules;
       setRules(nextRules);
@@ -1005,24 +1110,33 @@ const register = (moduleRegistry) => {
       setAreaRules(nextRules);
       trigger("replacementsolutions", "saveAreaRules", JSON.stringify(nextRules));
     }, []);
+    const persistRoadRules = React.useCallback((nextRules) => {
+      roadRulesRef.current = nextRules;
+      setRoadRules(nextRules);
+      trigger("replacementsolutions", "saveRoadRules", JSON.stringify(nextRules));
+    }, []);
     const deleteRule = React.useCallback((id, kind) => {
-      if (kind === "areas") {
+      if (kind === "roads") {
+        persistRoadRules(roadRulesRef.current.filter((item) => String(item.id) !== String(id)));
+      } else if (kind === "areas") {
         persistAreaRules(areaRulesRef.current.filter((item) => String(item.id) !== String(id)));
       } else {
         persistRules(rulesRef.current.filter((item) => String(item.id) !== String(id)));
       }
-    }, [persistAreaRules, persistRules]);
+    }, [persistAreaRules, persistRoadRules, persistRules]);
     const setRuleEnabled = React.useCallback((id, enabled, kind) => {
-      if (kind === "areas") {
+      if (kind === "roads") {
+        persistRoadRules(roadRulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
+      } else if (kind === "areas") {
         persistAreaRules(areaRulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
       } else {
         persistRules(rulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
       }
-    }, [persistAreaRules, persistRules]);
+    }, [persistAreaRules, persistRoadRules, persistRules]);
     const openSurfacePicker = React.useCallback((rule, side, kind) => {
       const selectedIds = side === "target"
         ? rule.targetSurfaceIds
-        : kind === "areas" ? rule.sourceAreaIds : rule.sourceSurfaceIds;
+        : kind === "areas" ? rule.sourceAreaIds : kind === "roads" ? rule.sourceRoadIds : rule.sourceSurfaceIds;
       trigger("replacementsolutions", "openSurfacePicker", JSON.stringify({
         rowId: rule.id,
         side,
@@ -1096,14 +1210,15 @@ const register = (moduleRegistry) => {
 
     const addRule = () => {
       const isAreas = activeTab === "areas";
+      const isRoads = activeTab === "roads";
       const newRule = {
         id: isAreas ? nextAreaRuleId.current++ : nextRuleId.current++,
         enabled: true,
-        ...(isAreas ? { sourceAreaIds: [] } : { sourceSurfaceIds: [] }),
-        targetSurfaceIds: [],
+        ...(isRoads ? { sourceRoadIds: [], targetSurfaceIds: [] } : isAreas ? { sourceAreaIds: [], targetSurfaceIds: [] } : { sourceSurfaceIds: [], targetSurfaceIds: [] }),
       };
-      const nextRules = isAreas ? [...areaRulesRef.current, newRule] : [...rulesRef.current, newRule];
-      if (isAreas) persistAreaRules(nextRules);
+      const nextRules = isRoads ? [...roadRulesRef.current, newRule] : isAreas ? [...areaRulesRef.current, newRule] : [...rulesRef.current, newRule];
+      if (isRoads) persistRoadRules(nextRules);
+      else if (isAreas) persistAreaRules(nextRules);
       else persistRules(nextRules);
       window.requestAnimationFrame(() => {
         const scrollArea = rulesScrollRef.current;
@@ -1111,20 +1226,24 @@ const register = (moduleRegistry) => {
       });
     };
 
-    const activeRules = activeTab === "areas" ? areaRules : rules;
-    const rows = activeRules.map((rule, index) => h(RuleRow, {
-      key: `${activeTab}-${rule.id}`,
-      rule,
-      ruleKind: activeTab,
-      rowIndex: index,
-      deleteRule: (id) => deleteRule(id, activeTab),
-      setRuleEnabled: (id, enabled) => setRuleEnabled(id, enabled, activeTab),
-      openSurfacePicker,
-      surfaceCatalogById: catalogById,
-      areaCatalogById,
-      surfaceParameters,
-      scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
-    }));
+    const activeRules = activeTab === "roads" ? roadRules : activeTab === "areas" ? areaRules : rules;
+    const rows = activeRules.map((rule, index) => activeTab === "roads"
+      ? h(RoadRuleRow, {
+        key: `roads-${rule.id}`, rule, rowIndex: index,
+        deleteRule: (id) => deleteRule(id, "roads"),
+        setRuleEnabled: (id, enabled) => setRuleEnabled(id, enabled, "roads"),
+        roadCatalogById,
+        surfaceCatalogById: catalogById,
+        openSurfacePicker,
+        scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
+      })
+      : h(RuleRow, {
+        key: `${activeTab}-${rule.id}`, rule, ruleKind: activeTab, rowIndex: index,
+        deleteRule: (id) => deleteRule(id, activeTab),
+        setRuleEnabled: (id, enabled) => setRuleEnabled(id, enabled, activeTab),
+        openSurfacePicker, surfaceCatalogById: catalogById, areaCatalogById, surfaceParameters,
+        scaledFontSize: Math.round(13 * fontSize) / 100 + "rem",
+      }));
 
     const style = {
       left: Math.max(0, Math.min(position.x, window.innerWidth - 80)) + "px",
@@ -1155,9 +1274,10 @@ const register = (moduleRegistry) => {
       });
     }));
     const isAreasTab = activeTab === "areas";
-    const alsoNewEnabled = isAreasTab ? alsoNewIndustryAreas : alsoNewSurfaceBuildings;
-    const alsoNewTrigger = isAreasTab ? "setAlsoNewIndustryAreas" : "setAlsoNewSurfaceBuildings";
-    const alsoNewLabel = isAreasTab ? "Also new industry areas" : "Also new buildings";
+    const isRoadsTab = activeTab === "roads";
+    const alsoNewEnabled = isRoadsTab ? alsoNewRoads : isAreasTab ? alsoNewIndustryAreas : alsoNewSurfaceBuildings;
+    const alsoNewTrigger = isRoadsTab ? "setAlsoNewRoads" : isAreasTab ? "setAlsoNewIndustryAreas" : "setAlsoNewSurfaceBuildings";
+    const alsoNewLabel = isRoadsTab ? "Also new roads" : isAreasTab ? "Also new industry areas" : "Also new buildings";
     const alsoNewBuildingsCheckbox = GameCheckbox
       ? h(GameCheckbox, {
         checked: alsoNewEnabled,
@@ -1180,11 +1300,11 @@ const register = (moduleRegistry) => {
         hideOnInteraction: false,
       }, alsoNewBuildingsControl)
       : alsoNewBuildingsControl;
-    const scopeSelector = h("div", { className: "atrScopeToolbar" + (activeTab === "areas" ? " atrScopeToolbarAreas" : "") },
+    const scopeSelector = h("div", { className: "atrScopeToolbar" + (activeTab !== "surfaces" ? " atrScopeToolbarAreas" : "") },
       activeTab === "surfaces" ? scopeOptionsGroup : null,
       alsoNewBuildingsTooltip);
     const tabs = h("div", { className: "atrMainTabs", role: "tablist", "aria-label": "Replacement category" },
-      [["surfaces", "Surfaces"], ["areas", "Areas"]].map(([tab, label]) => createButton(label, () => {
+      [["surfaces", "Surfaces"], ["areas", "Areas"], ["roads", "Roads"]].map(([tab, label]) => createButton(label, () => {
         setActiveTab(tab);
         trigger("replacementsolutions", "setActiveMainTab", tab);
       }, {
@@ -1194,8 +1314,9 @@ const register = (moduleRegistry) => {
         fontSize: scaledFontSize,
         style: BUTTON_STYLE.standard,
       })));
-    const replacementTrigger = activeTab === "areas" ? "replaceAreas" : "replaceSurfaces";
-    const revertTrigger = activeTab === "areas" ? "revertAllAreas" : "revertAllSurfaces";
+    const replacementTrigger = activeTab === "roads" ? "replaceRoads" : activeTab === "areas" ? "replaceAreas" : "replaceSurfaces";
+    const revertTrigger = activeTab === "roads" ? "revertAllRoads" : activeTab === "areas" ? "revertAllAreas" : "revertAllSurfaces";
+    const showActiveRevertAllButton = activeTab === "roads" || showRevertAllButton;
     const body = h("div", { className: "atrDialogBody", style: { fontSize: scaledFontSize } },
       h("div", { className: "atrActiveArea" },
       tabs,
@@ -1206,7 +1327,7 @@ const register = (moduleRegistry) => {
             fontSize: scaledFontSize,
             style: BUTTON_STYLE.standard,
           }),
-          showRevertAllButton && createButton("Revert All", () => trigger("replacementsolutions", revertTrigger), {
+          showActiveRevertAllButton && createButton("Revert All", () => trigger("replacementsolutions", revertTrigger), {
             variant: "primary",
             className: "atrRevertAllButton",
             fontSize: scaledFontSize,
@@ -1224,8 +1345,8 @@ const register = (moduleRegistry) => {
         className: "atrRulesHeader",
         left: h("div", { className: "atrHeaderSource" },
           h("span", { className: "atrCheckboxSpacer" }),
-          h("strong", { style: { fontSize: scaledFontSize } }, activeTab === "areas" ? "Special industries to replace" : "Surfaces to replace")),
-        center: h("strong", { style: { fontSize: scaledFontSize } }, "Replacement surfaces"),
+          h("strong", { style: { fontSize: scaledFontSize } }, activeTab === "roads" ? "Roads to replace" : activeTab === "areas" ? "Special industries to replace" : "Surfaces to replace")),
+        center: h("strong", { style: { fontSize: scaledFontSize } }, activeTab === "roads" ? "Replacement roads" : "Replacement surfaces"),
         right: null,
       }),
       h(ui.Scrollable || "div", {

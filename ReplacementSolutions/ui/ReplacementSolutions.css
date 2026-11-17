@@ -58,6 +58,8 @@
 .atrResizeLeft{left:0;cursor:nesw-resize}
 .atrResizeRight{right:0;cursor:nwse-resize}
 .atrPickerPositioner{z-index:1100;min-width:520rem;min-height:360rem}
+.atrRoadPickerPositioner{z-index:1101}
+.atrRoadPickerBody{display:flex;flex-direction:column;gap:8rem}
 .atrPickerPanel{width:100%;height:100%}
 .atrPickerPanelContent{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .atrPickerHeader{min-height:38rem;font-size:16rem;font-weight:600}

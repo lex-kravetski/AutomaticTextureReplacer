@@ -511,8 +511,6 @@ namespace AutomaticTextureReplacer
                 {
                     m_TargetsBySource[wrapper] = wrapperTargets;
                     m_RuleSourceByWrappedSurface[wrapper] = matchedSource;
-                    Mod.Log.InfoFormat("Automatic construction wrapper matched: wrapper='{0}', ruleSource='{1}'",
-                        m_PrefabSystem.GetPrefabName(wrapper), m_PrefabSystem.GetPrefabName(matchedSource));
                 }
             }
 
@@ -562,13 +560,6 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            Mod.Log.InfoFormat(
-                "New construction replacement maps cached: prefabCount={0}, surfaceSources={1}, surfaceMappings={2}, industryTypes={3}, industryMappings={4}",
-                m_CachedSurfacePrefabCount,
-                m_TargetsBySource.Count,
-                m_TargetsBySource.Sum(pair => pair.Value.Count),
-                m_TargetsByIndustryType.Count,
-                m_TargetsByIndustryType.Sum(pair => pair.Value.Count));
         }
 
         private static bool TryGetParenthesizedContent(string value, out string content)
