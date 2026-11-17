@@ -2,6 +2,12 @@ using System.Collections.Generic;
 
 namespace AutomaticTextureReplacer
 {
+    internal enum RoadAtlasScaleMode
+    {
+        FitRegionWidth,
+        SurfacePrefab,
+    }
+
     internal sealed class RoadAtlasRegion
     {
         public string Id { get; }
@@ -11,8 +17,10 @@ namespace AutomaticTextureReplacer
         public int Width { get; }
         public int Height { get; }
         public bool UsesFullTextureHeight { get; }
+        public RoadAtlasScaleMode ScaleMode { get; }
 
-        public RoadAtlasRegion(string id, string name, int x, int y, int width, int height = 0, bool usesFullTextureHeight = false)
+        public RoadAtlasRegion(string id, string name, int x, int y, int width, int height = 0,
+            bool usesFullTextureHeight = false, RoadAtlasScaleMode scaleMode = RoadAtlasScaleMode.SurfacePrefab)
         {
             Id = id;
             Name = name;
@@ -21,6 +29,7 @@ namespace AutomaticTextureReplacer
             Width = width;
             Height = height;
             UsesFullTextureHeight = usesFullTextureHeight;
+            ScaleMode = scaleMode;
         }
 
         public int GetHeight(int textureHeight) => UsesFullTextureHeight ? textureHeight : Height;
@@ -57,9 +66,11 @@ namespace AutomaticTextureReplacer
 
         public static readonly IReadOnlyList<RoadAtlasRegion> RoadEu = new List<RoadAtlasRegion>
         {
-            new RoadAtlasRegion("roadway", "Roadway", 0, 0, 546, usesFullTextureHeight: true),
+            new RoadAtlasRegion("roadway", "Roadway", 0, 0, 546, usesFullTextureHeight: true,
+                scaleMode: RoadAtlasScaleMode.FitRegionWidth),
             new RoadAtlasRegion("inner-curb", "Inner curb", 575, 0, 33, usesFullTextureHeight: true),
-            new RoadAtlasRegion("sidewalk", "Sidewalk", 635, 0, 884, usesFullTextureHeight: true),
+            new RoadAtlasRegion("sidewalk", "Sidewalk", 635, 0, 884, usesFullTextureHeight: true,
+                scaleMode: RoadAtlasScaleMode.FitRegionWidth),
             new RoadAtlasRegion("outer-curb", "Outer curb", 1551, 0, 27, usesFullTextureHeight: true),
             new RoadAtlasRegion("median", "Median", 1664, 63, 83, 448),
         };

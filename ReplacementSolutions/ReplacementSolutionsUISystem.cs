@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Colossal.Json;
 using Colossal.IO.AssetDatabase;
@@ -93,6 +94,9 @@ namespace AutomaticTextureReplacer
         private string m_LastRoadCatalog;
         private bool m_RoadCatalogBuildCompleted;
         private readonly Dictionary<string, TextureAsset> m_RoadDefiningTextures = new Dictionary<string, TextureAsset>(StringComparer.Ordinal);
+        private readonly Dictionary<int, RoadTextureGenerationState> m_RoadTextureGenerationStates = new Dictionary<int, RoadTextureGenerationState>();
+        private readonly HashSet<int> m_PendingRoadReplacementRules = new HashSet<int>();
+        private readonly object m_RoadTextureGenerationLock = new object();
         private EntityQuery m_SurfaceScaleInstancesQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
@@ -381,6 +385,7 @@ namespace AutomaticTextureReplacer
         protected override void OnUpdate()
         {
             base.OnUpdate();
+            ProcessRoadTextureGenerationTasks();
 
             // The catalog can be built at the main menu once surface prefabs and custom
             // textures are ready; only operations that touch live area batches wait for
@@ -743,7 +748,26 @@ namespace AutomaticTextureReplacer
 
         private void ReplaceRoads(string requestedRuleId)
         {
-            Mod.Log.InfoFormat("Road replacement stub invoked: ruleId='{0}'", requestedRuleId);
+            if (!int.TryParse(requestedRuleId, out int ruleId))
+            {
+                Mod.Log.WarnFormat("Road replacement request has an invalid rule id: '{0}'", requestedRuleId);
+                return;
+            }
+
+            if (m_RoadTextureGenerationStates.TryGetValue(ruleId, out RoadTextureGenerationState generation) &&
+                (generation.Task == null || !generation.Task.IsCompleted))
+            {
+                m_PendingRoadReplacementRules.Add(ruleId);
+                Mod.Log.InfoFormat("Road replacement queued until texture preparation completes: ruleId='{0}'", ruleId);
+                return;
+            }
+            if (generation != null && generation.Task != null && generation.Task.Status != TaskStatus.RanToCompletion)
+            {
+                Mod.Log.WarnFormat("Road replacement was not started because texture preparation failed or was cancelled: ruleId='{0}'", ruleId);
+                return;
+            }
+
+            Mod.Log.InfoFormat("Road replacement stub invoked: ruleId='{0}'", ruleId);
         }
 
         private void RevertAllRoads()
@@ -795,6 +819,7 @@ namespace AutomaticTextureReplacer
                                 ["y"] = region.Y.ToString(),
                                 ["width"] = region.Width.ToString(),
                                 ["height"] = (sourceTexture == null ? region.Height : region.GetHeight(sourceTexture.height)).ToString(),
+                                ["scaleMode"] = region.ScaleMode.ToString(),
                                 ["thumbnail"] = thumbnail ?? "Media/Placeholder.svg",
                                 ["tooltipThumbnail"] = tooltipThumbnail ?? thumbnail ?? "Media/Placeholder.svg",
                             });
@@ -818,6 +843,7 @@ namespace AutomaticTextureReplacer
                                 ["y"] = region.Y.ToString(),
                                 ["width"] = region.Width.ToString(),
                                 ["height"] = region.Height.ToString(),
+                                ["scaleMode"] = region.ScaleMode.ToString(),
                                 ["thumbnail"] = "Media/Placeholder.svg",
                                 ["tooltipThumbnail"] = "Media/Placeholder.svg",
                             });

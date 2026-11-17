@@ -394,17 +394,18 @@ const register = (moduleRegistry) => {
 
   // Shared body only: the tooltip and the scale dialog each provide their own
   // container, so this function never creates a floating Tooltip component.
-  const makeSurfaceTooltipContent = (surface, includeGroup, appearancePreview = null) => {
+  const makeSurfaceTooltipContent = (surface, includeGroup, appearancePreview = null, prefixTitle = null) => {
     return h(React.Fragment, null,
+      prefixTitle ? h("strong", null, prefixTitle) : null,
       h("strong", null, surface.name),
       includeGroup ? h("span", null, surface.group || "In-game") : null,
       h("span", { className: "atrSurfaceTooltipPath" }, surface.menuPath || "In-game asset"),
       makeSurfacePreviewImage(surface, appearancePreview));
   };
-  const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize, appearancePreview = null) => h("div", {
+  const makeSurfaceTooltip = (surface, includeGroup, scaledFontSize, appearancePreview = null, prefixTitle = null) => h("div", {
     className: "atrSurfaceTooltip",
     style: { fontSize: scaledFontSize },
-  }, makeSurfaceTooltipContent(surface, includeGroup, appearancePreview));
+  }, makeSurfaceTooltipContent(surface, includeGroup, appearancePreview, prefixTitle));
   const colorStringToCss = (value) => {
     const parts = String(value || "").split(",").map(Number);
     return parts.length === 4 && parts.every(Number.isFinite)
@@ -566,20 +567,21 @@ const register = (moduleRegistry) => {
       const replacementId = areaReplacements[area.id];
       const replacement = replacementId ? surfaceCatalogById.get(replacementId) : null;
       const src = replacement?.thumbnail || area.thumbnail || road?.thumbnail;
-      const selectAreaReplacement = () => openSurfacePicker(rule, "target", "roads", "single", area.id);
+      const selectAreaReplacement = () => openSurfacePicker(rule, "target", "roads", "single", area.id, area.name);
       const tileContents = h("img", { src, alt: replacement?.name || area.name });
       const tile = ui.Button
         ? h(ui.Button, { variant: "flat", className: "atrRoadAreaTile", focusKey: FocusDisabled, onSelect: selectAreaReplacement, "aria-label": area.name }, tileContents)
         : h("button", { type: "button", className: "atrRoadAreaTile", onClick: selectAreaReplacement, title: area.name }, tileContents);
       const tooltip = replacement
-        ? makeSurfaceTooltip(replacement, true, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters?.baseColors?.[replacement.id]) })
+        ? makeSurfaceTooltip(replacement, true, scaledFontSize,
+          { baseColorCss: colorStringToCss(surfaceParameters?.baseColors?.[replacement.id]) }, `Road area: ${area.name}`)
         : h("div", { className: "atrSurfaceTooltip", style: { fontSize: scaledFontSize } },
-          h("strong", null, area.name),
+          h("strong", null, `Road area: ${area.name}`),
           h("span", null, "RoadEU"),
           h("img", { className: "atrSurfaceTooltipImage", src: area.tooltipThumbnail || area.thumbnail || road?.thumbnail, alt: `${area.name} — RoadEU` }));
       const tooltipTile = ui.Tooltip
         ? h(ui.Tooltip, { key: area.id, tooltip, delayTime: 0, hideOnInteraction: false }, tile)
-        : h("div", { key: area.id, title: replacement ? `${area.name}: ${replacement.name}` : `${area.name} — RoadEU` }, tile);
+        : h("div", { key: area.id, title: replacement ? `Road area: ${area.name} — ${replacement.name}` : `Road area: ${area.name} — RoadEU` }, tile);
       return h("div", { key: area.id, className: "atrRoadAreaSlot" }, tooltipTile,
         h("span", { className: "atrRoadAreaLabel" }, area.name));
     });
@@ -890,9 +892,14 @@ const register = (moduleRegistry) => {
     };
     const renderTile = (group, surface, index) => {
       const selected = selectedIds.has(surface.id);
+      const roadAreaTooltipTitle = !isRoadPicker && pickerContext.kind === "roads" &&
+        pickerContext.side === "target" && pickerContext.areaId
+        ? `Road area: ${pickerContext.areaName || pickerContext.areaId}`
+        : null;
       const tooltip = isRoadPicker
         ? h("div", { className: "atrSurfaceTooltip" }, h("strong", null, surface.name))
-        : makeSurfaceTooltip(surface, false, scaledFontSize, { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) });
+        : makeSurfaceTooltip(surface, false, scaledFontSize,
+          { baseColorCss: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) }, roadAreaTooltipTitle);
       const tileContents = h(React.Fragment, null,
         h("img", { src: surface.thumbnail, alt: surface.name }),
         !isRoadPicker && colorStringToCss(surfaceParameters.baseColors?.[surface.id]) ? h("div", { className: "atrBaseColorOverlay", style: { backgroundColor: colorStringToCss(surfaceParameters.baseColors?.[surface.id]) } }) : null,
@@ -1186,7 +1193,7 @@ const register = (moduleRegistry) => {
         persistRules(rulesRef.current.map((item) => String(item.id) === String(id) ? { ...item, enabled } : item));
       }
     }, [persistAreaRules, persistRoadRules, persistRules]);
-    const openSurfacePicker = React.useCallback((rule, side, kind, selectionMode = "multiple", areaId = null) => {
+    const openSurfacePicker = React.useCallback((rule, side, kind, selectionMode = "multiple", areaId = null, areaName = null) => {
       const selectedIds = areaId
         ? [rule.roadAreaReplacements?.[areaId]].filter(Boolean)
         : side === "target"
@@ -1198,6 +1205,7 @@ const register = (moduleRegistry) => {
         kind,
         selectionMode,
         areaId,
+        areaName,
         selectedIds: selectedIds || [],
       }));
     }, []);
