@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using Colossal.IO.AssetDatabase;
 using Game;
 using Game.Prefabs;
@@ -18,98 +19,168 @@ namespace AutomaticTextureReplacer
     {
         private const float RoadAtlasWidth = 2048f;
         private const float RoadAtlasHeight = 4096f;
-        private EntityQuery m_BuildMenuQuery;
+        private EntityQuery m_RoadPrefabQuery;
         private PrefabSystem m_PrefabSystem;
         private bool m_Completed;
+        private bool m_LoggedRoadPrefabQueryReady;
         private int m_MenuLookupFrameCounter;
 
         protected override void OnCreate()
         {
             base.OnCreate();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            m_BuildMenuQuery = GetEntityQuery(
+            m_RoadPrefabQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PrefabData>(),
-                ComponentType.ReadOnly<UIAssetMenuData>(),
-                ComponentType.ReadOnly<UIGroupElement>());
+                ComponentType.ReadOnly<NetGeometryData>());
+            Mod.Log.Info("TEMP road texture inventory scanner initialized; waiting for Small Road prefab registration");
         }
 
         protected override void OnUpdate()
         {
-            if (m_Completed || m_BuildMenuQuery.IsEmptyIgnoreFilter)
+            if (m_Completed || m_RoadPrefabQuery.IsEmptyIgnoreFilter)
                 return;
-
-            GameManager gameManager = GameManager.instance;
-            if (gameManager == null || gameManager.isGameLoading)
-                return;
-
-            bool mapReady = gameManager != null &&
-                gameManager.shouldUpdateWorld &&
-                (string.Equals(gameManager.gameMode.ToString(), "Game", StringComparison.Ordinal) ||
-                 string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
-            if (mapReady)
+            if (!m_LoggedRoadPrefabQueryReady)
             {
-                InspectRoadBuildMenu(logWhenNotFound: true);
-                m_Completed = true;
-                return;
+                m_LoggedRoadPrefabQueryReady = true;
+                Mod.Log.InfoFormat("TEMP road geometry prefab query is ready: prefabCount={0}", m_RoadPrefabQuery.CalculateEntityCount());
             }
 
-            // Main-menu prefab registration can finish after the menu entity first
-            // appears, so retry periodically until the requested road is available.
             if (++m_MenuLookupFrameCounter >= 30)
             {
                 m_MenuLookupFrameCounter = 0;
-                m_Completed = InspectRoadBuildMenu(logWhenNotFound: false);
+                // TEMP: query road geometry prefabs directly; do not wait for the
+                // build-menu ECS or for a map world to start updating.
+                m_Completed = InspectRoadPrefabs();
             }
         }
 
-        private bool InspectRoadBuildMenu(bool logWhenNotFound)
+        private bool InspectRoadPrefabs()
         {
-            EntityManager entityManager = World.EntityManager;
-            using (NativeArray<Entity> menuEntities = m_BuildMenuQuery.ToEntityArray(Allocator.Temp))
+            using (NativeArray<Entity> roadEntities = m_RoadPrefabQuery.ToEntityArray(Allocator.Temp))
             {
-                foreach (Entity menuEntity in menuEntities)
+                foreach (Entity roadEntity in roadEntities)
                 {
-                    if (!m_PrefabSystem.TryGetPrefab<UIAssetMenuPrefab>(menuEntity, out UIAssetMenuPrefab menu) || menu == null)
+                    if (!m_PrefabSystem.TryGetPrefab<NetGeometryPrefab>(roadEntity, out NetGeometryPrefab road) || road == null ||
+                        !string.Equals(road.name, "Small Road", StringComparison.OrdinalIgnoreCase))
                         continue;
+                    return DumpTextureInventory(road);
+                }
+            }
+            return false;
+        }
 
-                    DynamicBuffer<UIGroupElement> categories = entityManager.GetBuffer<UIGroupElement>(menuEntity, true);
-                    foreach (UIGroupElement categoryEntry in categories)
+        private static bool DumpTextureInventory(NetGeometryPrefab geometry)
+        {
+            var inventory = new Dictionary<string, RoadTextureMapInventoryEntry>(StringComparer.Ordinal);
+            var visitedSections = new HashSet<NetSectionPrefab>();
+            var visitedPieces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (geometry.m_Sections != null)
+                foreach (NetSectionInfo info in geometry.m_Sections)
+                    if (info?.m_Section != null)
+                        CollectTextureInventory(info.m_Section, inventory, visitedSections, visitedPieces, 0);
+
+            var entries = inventory.Values.OrderBy(item => item.Property, StringComparer.Ordinal)
+                .ThenBy(item => item.Texture.name, StringComparer.OrdinalIgnoreCase).ToList();
+            if (entries.Count == 0) return false;
+            var lines = new List<string>
+            {
+                "TEMP Small Road texture layer inventory; source='" + geometry.name + "' [" + geometry.GetPrefabID() + "]",
+                "Unique material-property / TextureAsset pairs: " + entries.Count,
+            };
+            for (int i = 0; i < entries.Count; i++)
+            {
+                RoadTextureMapInventoryEntry item = entries[i];
+                List<string> pieces = item.Pieces.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+                string dimensions = ReadTextureDimensions(item.Texture);
+                lines.Add((i == entries.Count - 1 ? "└─ " : "├─ ") + item.Property + " => " + item.Texture.name +
+                    " [" + item.Texture.id + "]; size=" + dimensions + "; pieces=" + pieces.Count);
+                for (int pieceIndex = 0; pieceIndex < pieces.Count; pieceIndex++)
+                    lines.Add((i == entries.Count - 1 ? "   " : "│  ") +
+                        (pieceIndex == pieces.Count - 1 ? "└─ " : "├─ ") + pieces[pieceIndex]);
+            }
+            Mod.Log.Info("\n" + string.Join("\n", lines));
+            return entries.Count > 0;
+        }
+
+        private static void CollectTextureInventory(NetSectionPrefab section,
+            Dictionary<string, RoadTextureMapInventoryEntry> inventory, HashSet<NetSectionPrefab> visitedSections,
+            HashSet<string> visitedPieces, int depth)
+        {
+            if (section == null || depth > 16 || !visitedSections.Add(section)) return;
+            if (section.m_SubSections != null)
+                foreach (NetSubSectionInfo subSection in section.m_SubSections)
+                    if (subSection?.m_Section != null)
+                        CollectTextureInventory(subSection.m_Section, inventory, visitedSections, visitedPieces, depth + 1);
+
+            if (section.m_Pieces == null) return;
+            foreach (NetPieceInfo pieceInfo in section.m_Pieces)
+            {
+                NetPiecePrefab piece = pieceInfo?.m_Piece;
+                if (piece == null || !visitedPieces.Add(piece.GetPrefabID().ToString()) || piece.surfaceAssets == null) continue;
+                foreach (SurfaceAsset surface in piece.surfaceAssets)
+                {
+                    if (surface == null) continue;
+                    bool loaded = false;
+                    try
                     {
-                        if (!m_PrefabSystem.TryGetPrefab<UIAssetCategoryPrefab>(categoryEntry.m_Prefab, out UIAssetCategoryPrefab category) || category == null)
-                            continue;
-
-                        DynamicBuffer<UIGroupElement> entries = entityManager.GetBuffer<UIGroupElement>(categoryEntry.m_Prefab, true);
-                        foreach (UIGroupElement entry in entries)
+                        surface.LoadProperties(false);
+                        loaded = true;
+                        if (surface.textures == null) continue;
+                        foreach (KeyValuePair<string, TextureAsset> texture in surface.textures)
                         {
-                            if (!m_PrefabSystem.TryGetPrefab<PrefabBase>(entry.m_Prefab, out PrefabBase prefab) || prefab == null)
-                                continue;
-
-                            string displayName = GetMenuDisplayName(prefab);
-                            bool isTarget = NormalizePrefabName(displayName) == NormalizePrefabName("Four-Lane Divided Road");
-                            if (!isTarget) continue;
-
-                            Mod.Log.InfoFormat("Matched build-menu item: menu='{0}', category='{1}', displayName='{2}', asset='{3}', type='{4}', id='{5}'",
-                                menu.name, category.name, displayName, prefab.name, prefab.GetType().Name, prefab.GetPrefabID());
-                            if (prefab is NetGeometryPrefab geometry)
+                            if (texture.Value == null) continue;
+                            string key = texture.Key + "|" + texture.Value.id;
+                            if (!inventory.TryGetValue(key, out RoadTextureMapInventoryEntry entry))
                             {
-                                Mod.Log.Info("Build-menu item resolves directly to NetGeometryPrefab; classifying its piece tree.");
-                                Dump(geometry, entry.m_Prefab, m_PrefabSystem);
-                                return true;
+                                entry = new RoadTextureMapInventoryEntry(texture.Key, texture.Value);
+                                inventory.Add(key, entry);
                             }
-                            else
-                            {
-                                Mod.Log.WarnFormat("Build-menu item matched by display name but is not a NetGeometryPrefab; type='{0}', id='{1}'",
-                                    prefab.GetType().FullName, prefab.GetPrefabID());
-                                return true;
-                            }
+                            entry.Pieces.Add(piece.name);
                         }
+                    }
+                    catch (Exception exception)
+                    {
+                        Mod.Log.Warn(exception, "TEMP road texture layer scan failed for piece " + piece.name);
+                    }
+                    finally
+                    {
+                        if (loaded) surface.Unload();
                     }
                 }
             }
+        }
 
-            if (logWhenNotFound)
-                Mod.Log.Warn("Road build-menu item 'Four-Lane Divided Road' was not found by its displayed name.");
-            return false;
+        private static string ReadTextureDimensions(TextureAsset asset)
+        {
+            Texture2D texture = null;
+            bool loaded = false;
+            try
+            {
+                texture = asset.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
+                loaded = true;
+                return texture == null ? "<unavailable>" : texture.width + "x" + texture.height;
+            }
+            catch (Exception exception)
+            {
+                return "<unavailable: " + exception.Message + ">";
+            }
+            finally
+            {
+                if (loaded) asset.Unload();
+            }
+        }
+
+        private sealed class RoadTextureMapInventoryEntry
+        {
+            public string Property { get; }
+            public TextureAsset Texture { get; }
+            public HashSet<string> Pieces { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public RoadTextureMapInventoryEntry(string property, TextureAsset texture)
+            {
+                Property = property;
+                Texture = texture;
+            }
         }
 
         private static string GetMenuDisplayName(PrefabBase prefab)
@@ -142,7 +213,7 @@ namespace AutomaticTextureReplacer
                 new PieceGroup("Outer Curb", new UvBounds(1520f / RoadAtlasWidth, 0f, 1616f / RoadAtlasWidth, 1f)),
                 new PieceGroup("Median", new UvBounds(1616f / RoadAtlasWidth, 1f - 936f / RoadAtlasHeight, 1823f / RoadAtlasWidth, 1f - 4f / RoadAtlasHeight))
             };
-            var missed = new List<string>();
+            var missed = new List<MissedPieceReport>();
             var unclassified = new List<string>();
             var textureWrapModes = new Dictionary<string, TextureWrapModes>(StringComparer.OrdinalIgnoreCase);
             var visitedSections = new HashSet<NetSectionPrefab>();
@@ -160,7 +231,7 @@ namespace AutomaticTextureReplacer
                 AddPieceLines(lines, group.Pieces);
             }
             lines.Add($"Missed piece (defining texture found, UV bounds outside all zones) ({missed.Count})");
-            AddPieceLines(lines, missed);
+            AddMissedPieceLines(lines, missed);
             lines.Add($"Unclassified (defining texture not found) ({unclassified.Count})");
             AddPieceLines(lines, unclassified);
             Mod.Log.Info("\n" + string.Join("\n", lines));
@@ -177,7 +248,55 @@ namespace AutomaticTextureReplacer
                 lines.Add("  " + (i == pieces.Count - 1 ? "└─ " : "├─ ") + pieces[i]);
         }
 
-        private static void CollectPieces(NetSectionPrefab section, List<PieceGroup> groups, List<string> missed,
+        private static void AddMissedPieceLines(List<string> lines, List<MissedPieceReport> pieces)
+        {
+            if (pieces.Count == 0)
+            {
+                lines.Add("  └─ <none>");
+                return;
+            }
+
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                MissedPieceReport piece = pieces[i];
+                lines.Add("  " + (i == pieces.Count - 1 ? "└─ " : "├─ ") + piece.Label +
+                    (piece.RoadAtlasUv == null ? "; RoadEU UV unavailable" : "; RoadEU " + piece.RoadAtlasUv));
+                lines.Add("      Prefab placement: width=" + F(piece.Width) + " m, length=" + F(piece.Length) + " m, widthOffset=" + F(piece.WidthOffset) +
+                    " m, sideConnectionOffset=" + F(piece.SideConnectionOffset) + " m, nodeOffset=" + F(piece.NodeOffset) + " m");
+                foreach (string uvChannel in piece.UvChannels)
+                    lines.Add("      " + uvChannel);
+                if (piece.Slots.Count == 0)
+                {
+                    lines.Add("      └─ <no SurfaceAsset slots>");
+                    continue;
+                }
+
+                for (int slotIndex = 0; slotIndex < piece.Slots.Count; slotIndex++)
+                {
+                    SurfaceSlotReport slot = piece.Slots[slotIndex];
+                    bool lastSlot = slotIndex == piece.Slots.Count - 1;
+                    lines.Add("      " + (lastSlot ? "└─ " : "├─ ") + slot.Label);
+                    string slotIndent = "      " + (lastSlot ? "   " : "│  ");
+                    int childCount = slot.Textures.Count + (slot.RoadAtlasUv == null ? 0 : 1);
+                    if (childCount == 0)
+                    {
+                        lines.Add(slotIndent + "└─ <no resolved texture maps>");
+                        continue;
+                    }
+
+                    int childIndex = 0;
+                    foreach (string texture in slot.Textures)
+                    {
+                        childIndex++;
+                        lines.Add(slotIndent + (childIndex == childCount ? "└─ " : "├─ ") + texture);
+                    }
+                    if (slot.RoadAtlasUv != null)
+                        lines.Add(slotIndent + "└─ RoadEU " + slot.RoadAtlasUv);
+                }
+            }
+        }
+
+        private static void CollectPieces(NetSectionPrefab section, List<PieceGroup> groups, List<MissedPieceReport> missed,
             List<string> unclassified, Dictionary<string, TextureWrapModes> textureWrapModes,
             HashSet<NetSectionPrefab> visitedSections, HashSet<string> visitedPieces,
             PrefabSystem prefabSystem, int depth)
@@ -199,23 +318,47 @@ namespace AutomaticTextureReplacer
                     bool hasDefiningTexture = false;
                     bool placed = false;
                     string observedUv = null;
+                    var uvChannels = new List<string>();
+                    var slotReports = new List<SurfaceSlotReport>();
                     if (piece.surfaceAssets != null)
                     {
                         int slot = 0;
                         foreach (SurfaceAsset surface in piece.surfaceAssets)
                         {
                             int currentSlot = slot++;
+                            var slotReport = new SurfaceSlotReport
+                            {
+                                Label = "SurfaceAsset slot[" + currentSlot + "]: " +
+                                    (surface == null ? "<null>" : surface.name + " [" + surface.id + "]")
+                            };
+                            slotReports.Add(slotReport);
                             if (surface == null) continue;
                             bool loaded = false;
                             try
                             {
-                                surface.LoadProperties(false);
+                                Material material = surface.Load(-1, loadTextures: false, mode: TextureAsset.KeepOnCPU.Dont, useVT: true);
                                 loaded = true;
                                 if (surface.textures == null) continue;
+                                var textureTransforms = new Dictionary<string, TextureTransform>(StringComparer.Ordinal);
+                                if (material != null)
+                                    foreach (string property in surface.textures.Keys)
+                                        if (material.HasProperty(property))
+                                            textureTransforms[property] = new TextureTransform(material.GetTextureScale(property), material.GetTextureOffset(property));
+                                foreach (KeyValuePair<string, UnityEngine.Vector4> vector in surface.vectors)
+                                    slotReport.Textures.Add("material vector " + vector.Key + "=" + FormatVector(vector.Value));
                                 TextureWrapModes wrapModes = default;
                                 bool thisSlotUsesDefiningTexture = false;
                                 foreach (KeyValuePair<string, TextureAsset> texture in surface.textures)
-                                    if (texture.Value != null && IsDefiningRoadTexture(texture.Value.name))
+                                {
+                                    if (texture.Value == null)
+                                    {
+                                        slotReport.Textures.Add(texture.Key + ": <null>");
+                                        continue;
+                                    }
+
+                                    textureTransforms.TryGetValue(texture.Key, out TextureTransform transform);
+                                    slotReport.Textures.Add(texture.Key + ": " + texture.Value.name + " [" + texture.Value.id + "]; scale=" + FormatVector(transform.Scale) + ", offset=" + FormatVector(transform.Offset));
+                                    if (IsDefiningRoadTexture(texture.Value.name))
                                     {
                                         hasDefiningTexture = true;
                                         thisSlotUsesDefiningTexture = true;
@@ -226,11 +369,23 @@ namespace AutomaticTextureReplacer
                                             textureWrapModes[textureId] = wrapModes;
                                         }
                                     }
+                                }
                                 if (!thisSlotUsesDefiningTexture) continue;
 
                                 UvBounds bounds;
-                                if (!TryGetUvBounds(piece, currentSlot, wrapModes, out bounds)) continue;
+                                uvChannels.Clear();
+                                TextureTransform roadTransform = default;
+                                string roadProperty = null;
+                                foreach (KeyValuePair<string, TextureAsset> texture in surface.textures)
+                                    if (texture.Value != null && IsDefiningRoadTexture(texture.Value.name))
+                                    {
+                                        roadProperty = texture.Key;
+                                        textureTransforms.TryGetValue(roadProperty, out roadTransform);
+                                        break;
+                                    }
+                                if (!TryGetUvBounds(piece, currentSlot, wrapModes, roadTransform, out bounds, uvChannels)) continue;
                                 observedUv = FormatTexturePixels(bounds);
+                                slotReport.RoadAtlasUv = observedUv + (roadProperty == null ? "" : "; map=" + roadProperty + ", scale=" + FormatVector(roadTransform.Scale) + ", offset=" + FormatVector(roadTransform.Offset));
                                 foreach (PieceGroup group in groups)
                                     if (group.Bounds.Contains(bounds))
                                     {
@@ -241,6 +396,7 @@ namespace AutomaticTextureReplacer
                             }
                             catch (Exception exception)
                             {
+                                slotReport.Textures.Add("<inspection failed: " + exception.Message + ">");
                                 Mod.Log.Warn("Could not inspect Four-Lane Divided Road piece " + label + " texture slot " + currentSlot + ": " + exception.Message);
                             }
                             finally { if (loaded) surface.Unload(); }
@@ -249,9 +405,41 @@ namespace AutomaticTextureReplacer
                     }
 
                     if (placed) continue;
-                    if (hasDefiningTexture) missed.Add(label + (observedUv == null ? "; UV unavailable" : "; " + observedUv));
+                    if (hasDefiningTexture)
+                        missed.Add(new MissedPieceReport
+                        {
+                            Label = label,
+                            RoadAtlasUv = observedUv,
+                            Slots = slotReports,
+                            Width = piece.m_Width,
+                            Length = piece.m_Length,
+                            WidthOffset = piece.m_WidthOffset,
+                            SideConnectionOffset = piece.m_SideConnectionOffset,
+                            NodeOffset = piece.m_NodeOffset,
+                            UvChannels = uvChannels
+                        });
                     else unclassified.Add(label);
                 }
+        }
+
+        private sealed class MissedPieceReport
+        {
+            public string Label;
+            public string RoadAtlasUv;
+            public List<SurfaceSlotReport> Slots;
+            public float Width;
+            public float Length;
+            public float WidthOffset;
+            public float SideConnectionOffset;
+            public float NodeOffset;
+            public List<string> UvChannels;
+        }
+
+        private sealed class SurfaceSlotReport
+        {
+            public string Label;
+            public List<string> Textures { get; } = new List<string>();
+            public string RoadAtlasUv;
         }
 
         private static bool IsDefiningRoadTexture(string textureName)
@@ -259,8 +447,8 @@ namespace AutomaticTextureReplacer
             return textureName != null && textureName.StartsWith("RoadEU_BaseColor_", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool TryGetUvBounds(NetPiecePrefab piece, int requestedSlot, TextureWrapModes wrapModes,
-            out UvBounds wrappedBounds)
+        private static bool TryGetUvBounds(NetPiecePrefab piece, int requestedSlot, TextureWrapModes wrapModes, TextureTransform transform,
+            out UvBounds wrappedBounds, List<string> uvChannelReports)
         {
             Mesh[] meshes = null;
             float wrappedMinU = float.PositiveInfinity, wrappedMinV = float.PositiveInfinity;
@@ -273,17 +461,37 @@ namespace AutomaticTextureReplacer
                     foreach (Mesh mesh in meshes)
                     {
                         if (mesh == null || requestedSlot < 0 || requestedSlot >= mesh.subMeshCount) continue;
+                        int[] indices = mesh.GetIndices(requestedSlot);
                         Vector2[] uv = mesh.uv;
                         if (uv == null || uv.Length == 0) continue;
-                        foreach (int vertexIndex in mesh.GetIndices(requestedSlot))
+                        foreach (int vertexIndex in indices)
                         {
                             if (vertexIndex < 0 || vertexIndex >= uv.Length) continue;
                             Vector2 p = uv[vertexIndex];
-                            float wrappedU = WrapCoordinate(p.x, wrapModes.U);
-                            float wrappedV = WrapCoordinate(p.y, wrapModes.V);
+                            float wrappedU = WrapCoordinate(p.x * transform.Scale.x + transform.Offset.x, wrapModes.U);
+                            float wrappedV = WrapCoordinate(p.y * transform.Scale.y + transform.Offset.y, wrapModes.V);
                             count++;
                             wrappedMinU = Mathf.Min(wrappedMinU, wrappedU); wrappedMinV = Mathf.Min(wrappedMinV, wrappedV);
                             wrappedMaxU = Mathf.Max(wrappedMaxU, wrappedU); wrappedMaxV = Mathf.Max(wrappedMaxV, wrappedV);
+                        }
+                        for (int channel = 0; channel < 8; channel++)
+                        {
+                            var channelValues = new List<Vector4>();
+                            mesh.GetUVs(channel, channelValues);
+                            if (channelValues.Count == 0) continue;
+                            Vector4 min = new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                            Vector4 max = new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                            int channelCount = 0;
+                            foreach (int vertexIndex in indices)
+                            {
+                                if (vertexIndex < 0 || vertexIndex >= channelValues.Count) continue;
+                                Vector4 value = channelValues[vertexIndex];
+                                min = Vector4.Min(min, value);
+                                max = Vector4.Max(max, value);
+                                channelCount++;
+                            }
+                            if (channelCount > 0)
+                                uvChannelReports.Add("Mesh UV" + channel + " bounds: X=[" + F(min.x) + ", " + F(max.x) + "], Y=[" + F(min.y) + ", " + F(max.y) + "], Z=[" + F(min.z) + ", " + F(max.z) + "], W=[" + F(min.w) + ", " + F(max.w) + "]");
                         }
                     }
                 wrappedBounds = count == 0 ? default : new UvBounds(wrappedMinU, wrappedMinV, wrappedMaxU, wrappedMaxV);
@@ -355,6 +563,16 @@ namespace AutomaticTextureReplacer
             public TextureWrapModes(TextureWrapMode u, TextureWrapMode v) { U = u; V = v; }
         }
 
+        private struct TextureTransform
+        {
+            private readonly Vector2 m_Scale;
+            private readonly Vector2 m_Offset;
+            private readonly bool m_IsSet;
+            public Vector2 Scale => m_IsSet ? m_Scale : Vector2.one;
+            public Vector2 Offset => m_IsSet ? m_Offset : Vector2.zero;
+            public TextureTransform(Vector2 scale, Vector2 offset) { m_Scale = scale; m_Offset = offset; m_IsSet = true; }
+        }
+
         private sealed class PieceGroup
         {
             public string Name { get; }
@@ -387,6 +605,8 @@ namespace AutomaticTextureReplacer
         }
 
         private static string F(float value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+        private static string FormatVector(Vector2 value) => "(" + F(value.x) + ", " + F(value.y) + ")";
+        private static string FormatVector(UnityEngine.Vector4 value) => "(" + F(value.x) + ", " + F(value.y) + ", " + F(value.z) + ", " + F(value.w) + ")";
         private static string F(Unity.Mathematics.float3 value) => "(" + F(value.x) + ", " + F(value.y) + ", " + F(value.z) + ")";
 
         private static void ExportTextures(Dictionary<string, TextureAsset> textures)

@@ -57,7 +57,8 @@ namespace AutomaticTextureReplacer
             }
 
             updateSystem.UpdateAt<ReplacementSolutionsUISystem>(SystemUpdatePhase.UIUpdate);
-            updateSystem.UpdateAt<SmallRoadPrefabDumpSystem>(SystemUpdatePhase.UIUpdate);
+            // TEMP diagnostic: Small Road texture-layer inventory, re-enable only when needed.
+            // updateSystem.UpdateAt<SmallRoadPrefabDumpSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateBefore<SurfaceReplacementSystem, ToolOutputBarrier>(SystemUpdatePhase.ToolUpdate);
             updateSystem.UpdateBefore<NewBuildingSurfaceReplacementSystem, GenerateAreasSystem>(SystemUpdatePhase.Modification1);
         }

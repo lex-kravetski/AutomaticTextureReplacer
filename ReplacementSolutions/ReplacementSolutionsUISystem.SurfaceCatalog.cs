@@ -86,6 +86,12 @@ namespace AutomaticTextureReplacer
                         string relativePath = filePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
                             ? filePath.Substring(prefix.Length)
                             : Path.GetFileName(filePath);
+                        string firstPathSegment = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).FirstOrDefault();
+                        if (string.Equals(rootName, "Replacement Solutions", StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(firstPathSegment, "textures", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
                         if (relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                             .Any(ShouldSkipCustomTextureDirectory))
                         {

@@ -91,6 +91,8 @@ namespace AutomaticTextureReplacer
         private EntityQuery m_SurfaceQuery;
         private EntityQuery m_RoadPrefabQuery;
         private string m_LastRoadCatalog;
+        private bool m_RoadCatalogBuildCompleted;
+        private readonly Dictionary<string, TextureAsset> m_RoadDefiningTextures = new Dictionary<string, TextureAsset>(StringComparer.Ordinal);
         private EntityQuery m_SurfaceScaleInstancesQuery;
         private int m_LastDialogFontSize = -1;
         private bool? m_LastShowInGameSurfacesAsTargets;
@@ -390,7 +392,7 @@ namespace AutomaticTextureReplacer
                 (string.Equals(gameManager.gameMode.ToString(), "Game", StringComparison.Ordinal) ||
                  string.Equals(gameManager.gameMode.ToString(), "Editor", StringComparison.Ordinal));
             PrefabSystem prefabSystem = World.GetExistingSystemManaged<PrefabSystem>();
-            if (prefabSystem != null && !m_RoadPrefabQuery.IsEmptyIgnoreFilter)
+            if (!m_RoadCatalogBuildCompleted && prefabSystem != null && !m_RoadPrefabQuery.IsEmptyIgnoreFilter)
             {
                 string roadCatalog = BuildRoadCatalog(prefabSystem);
                 if (!string.Equals(roadCatalog, m_LastRoadCatalog, StringComparison.Ordinal))
@@ -676,9 +678,11 @@ namespace AutomaticTextureReplacer
         {
             if (Mod.Settings == null) return;
             string json = string.IsNullOrWhiteSpace(value) ? "[]" : value;
+            string previousJson = Mod.Settings.RoadRulesJson ?? "[]";
             Mod.Settings.RoadRulesJson = json;
             Mod.Settings.ApplyAndSave();
             m_RoadRulesJson.Update(json);
+            GenerateChangedRoadAreaTextures(previousJson, json);
         }
 
         private void OpenRoadPicker(string contextJson)
@@ -757,7 +761,6 @@ namespace AutomaticTextureReplacer
 
         private string BuildRoadCatalog(PrefabSystem prefabSystem)
         {
-            var entries = new List<Dictionary<string, string>>();
             using (NativeArray<Entity> entities = m_RoadPrefabQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in entities)
@@ -766,17 +769,154 @@ namespace AutomaticTextureReplacer
                         !string.Equals(prefab.name, "Small Road", StringComparison.OrdinalIgnoreCase)) continue;
                     string icon = ImageSystem.GetIcon(prefab);
                     if (string.IsNullOrWhiteSpace(icon)) icon = ImageSystem.GetThumbnail(prefab);
-                    entries.Add(new Dictionary<string, string>
+                    m_RoadDefiningTextures.Clear();
+                    if (!TryFindRoadDefiningTextures(prefab, new HashSet<NetSectionPrefab>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+                        return "[]";
+                    TextureAsset baseColor = m_RoadDefiningTextures.TryGetValue("_BaseColorMap", out TextureAsset foundBaseColor) ? foundBaseColor : null;
+                    var areaEntries = new List<Dictionary<string, string>>();
+                    Texture2D sourceTexture = null;
+                    bool loadedSource = false;
+                    try
                     {
-                        ["id"] = prefab.GetPrefabID().ToString(),
+                        if (baseColor != null)
+                        {
+                            sourceTexture = baseColor.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
+                            loadedSource = true;
+                        }
+                        foreach (RoadAtlasRegion region in RoadAtlasRegions.RoadEu)
+                        {
+                            string thumbnail = sourceTexture == null ? "Media/Placeholder.svg" : CaptureRoadRegionPreview(sourceTexture, region, 128);
+                            string tooltipThumbnail = sourceTexture == null ? "Media/Placeholder.svg" : CaptureRoadRegionPreview(sourceTexture, region, 384, cropToMaximumSquare: true);
+                            areaEntries.Add(new Dictionary<string, string>
+                            {
+                                ["id"] = region.Id,
+                                ["name"] = region.Name,
+                                ["x"] = region.X.ToString(),
+                                ["y"] = region.Y.ToString(),
+                                ["width"] = region.Width.ToString(),
+                                ["height"] = (sourceTexture == null ? region.Height : region.GetHeight(sourceTexture.height)).ToString(),
+                                ["thumbnail"] = thumbnail ?? "Media/Placeholder.svg",
+                                ["tooltipThumbnail"] = tooltipThumbnail ?? thumbnail ?? "Media/Placeholder.svg",
+                            });
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        Mod.Log.Warn(exception, "Could not create previews for the RoadEU atlas regions");
+                    }
+                    finally
+                    {
+                        if (loadedSource) baseColor.Unload();
+                    }
+                    if (areaEntries.Count == 0)
+                        foreach (RoadAtlasRegion region in RoadAtlasRegions.RoadEu)
+                            areaEntries.Add(new Dictionary<string, string>
+                            {
+                                ["id"] = region.Id,
+                                ["name"] = region.Name,
+                                ["x"] = region.X.ToString(),
+                                ["y"] = region.Y.ToString(),
+                                ["width"] = region.Width.ToString(),
+                                ["height"] = region.Height.ToString(),
+                                ["thumbnail"] = "Media/Placeholder.svg",
+                                ["tooltipThumbnail"] = "Media/Placeholder.svg",
+                            });
+
+                    var entry = new Dictionary<string, string>
+                    {
+                        ["id"] = RoadAtlasRegions.RoadEuCatalogId,
                         ["name"] = prefab.name,
                         ["thumbnail"] = string.IsNullOrWhiteSpace(icon) ? "Media/Placeholder.svg" : icon,
                         ["group"] = "Roads",
-                    });
-                    break;
+                        ["areasJson"] = JSON.Dump(areaEntries),
+                    };
+                    m_RoadCatalogBuildCompleted = true;
+                    return JSON.Dump(new[] { entry });
                 }
             }
-            return JSON.Dump(entries);
+            return "[]";
+        }
+
+        private bool TryFindRoadDefiningTextures(NetGeometryPrefab geometry, HashSet<NetSectionPrefab> visitedSections, HashSet<string> visitedPieces)
+        {
+            if (geometry?.m_Sections == null) return false;
+            foreach (NetSectionInfo sectionInfo in geometry.m_Sections)
+                if (sectionInfo?.m_Section != null)
+                    TryFindRoadDefiningTextures(sectionInfo.m_Section, visitedSections, visitedPieces);
+            return m_RoadDefiningTextures.ContainsKey("_BaseColorMap");
+        }
+
+        private bool TryFindRoadDefiningTextures(NetSectionPrefab section, HashSet<NetSectionPrefab> visitedSections, HashSet<string> visitedPieces)
+        {
+            if (section == null || !visitedSections.Add(section)) return false;
+            if (section.m_SubSections != null)
+                foreach (NetSubSectionInfo subSection in section.m_SubSections)
+                    if (subSection?.m_Section != null)
+                        TryFindRoadDefiningTextures(subSection.m_Section, visitedSections, visitedPieces);
+            if (section.m_Pieces != null)
+            foreach (NetPieceInfo pieceInfo in section.m_Pieces)
+            {
+                NetPiecePrefab piece = pieceInfo?.m_Piece;
+                if (piece == null || !visitedPieces.Add(piece.GetPrefabID().ToString()) || piece.surfaceAssets == null) continue;
+                foreach (SurfaceAsset surface in piece.surfaceAssets)
+                {
+                    if (surface == null) continue;
+                    bool loaded = false;
+                    try
+                    {
+                        surface.LoadProperties(false);
+                        loaded = true;
+                        foreach (KeyValuePair<string, TextureAsset> texture in surface.textures)
+                        {
+                            if (texture.Value == null) continue;
+                            RoadAtlasTextureLayer layer = RoadAtlasRegions.RoadEuTextureLayers.FirstOrDefault(candidate =>
+                                string.Equals(candidate.MaterialProperty, texture.Key, StringComparison.Ordinal) &&
+                                string.Equals(candidate.TextureAssetName, texture.Value.name, StringComparison.Ordinal));
+                            if (layer == null) continue;
+                            m_RoadDefiningTextures[texture.Key] = texture.Value;
+                        }
+                    }
+                    finally
+                    {
+                        if (loaded) surface.Unload();
+                    }
+                }
+            }
+            return m_RoadDefiningTextures.ContainsKey("_BaseColorMap");
+        }
+
+        private static string CaptureRoadRegionPreview(Texture source, RoadAtlasRegion region, int size, bool cropToMaximumSquare = false)
+        {
+            int height = region.GetHeight(source.height);
+            int maximumCropSide = Math.Min(region.Width, height);
+            int cropSide = cropToMaximumSquare ? maximumCropSide : Math.Min(size, maximumCropSide);
+            if (cropSide <= 0) return null;
+            RenderTexture target = null;
+            Texture2D readback = null;
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                target = RenderTexture.GetTemporary(size, size, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                Vector2 scale = new Vector2((float)cropSide / source.width, (float)cropSide / source.height);
+                Vector2 offset = new Vector2((float)region.X / source.width, 1f - (float)(region.Y + cropSide) / source.height);
+                Graphics.Blit(source, target, scale, offset);
+                RenderTexture.active = target;
+                readback = new Texture2D(size, size, TextureFormat.RGBA32, false, false);
+                readback.ReadPixels(new Rect(0, 0, size, size), 0, 0, false);
+                readback.Apply(false, false);
+                return "data:image/png;base64," + Convert.ToBase64String(readback.EncodeToPNG());
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Warn(exception, "Could not crop a road atlas region preview: " + region.Name);
+                return null;
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                if (readback != null) UnityEngine.Object.Destroy(readback);
+                if (target != null) RenderTexture.ReleaseTemporary(target);
+            }
         }
 
         private void ReplaceSurfaces(string requestedRuleId)
