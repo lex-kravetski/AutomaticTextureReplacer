@@ -48,6 +48,8 @@ namespace AutomaticTextureReplacer
             public string Path { get; set; }
             public string MapProperty { get; set; }
             public string Replacements { get; set; }
+            public float NormalHueRotationDegrees { get; set; }
+            public List<RectInt> NormalHueRegions { get; set; }
         }
 
         private int m_RoadTextureGenerationCounter;
@@ -249,9 +251,18 @@ namespace AutomaticTextureReplacer
             {
                 if (!m_RoadTextureGenerationStates.TryGetValue(ruleId, out RoadTextureGenerationState current) ||
                     !ReferenceEquals(current, generation)) return;
+                var outputProperties = new HashSet<string>(StringComparer.Ordinal);
                 foreach (RoadAtlasTextureLayer layer in RoadAtlasRegions.RoadEuTextureLayers)
                 {
-                    string fileName = SanitizePrefabName("RoadEU_Rule_" + ruleId + "_" + layer.MaterialProperty.Trim('_')) + ".png";
+                    outputProperties.Add(layer.MaterialProperty);
+                    outputProperties.Add(RoadAtlasRegions.RoadEu.First(region => region.Id == "roadway")
+                        .GetDestinationProperty(layer.MaterialProperty));
+                }
+                // Remove a mask output left by earlier experimental builds while mask baking is disabled.
+                outputProperties.Add("_MaskMap");
+                foreach (string property in outputProperties)
+                {
+                    string fileName = SanitizePrefabName("RoadEU_Rule_" + ruleId + "_" + property.Trim('_')) + ".png";
                     string path = Path.Combine(directory, fileName);
                     if (outputPaths.Contains(path) || !File.Exists(path)) continue;
                     try { File.Delete(path); }
@@ -287,6 +298,7 @@ namespace AutomaticTextureReplacer
         private List<RoadTexturePngOutput> GenerateRoadRuleTextures(RoadTextureRule rule, RoadTextureGenerationState generation)
         {
             var outputs = new List<RoadTexturePngOutput>();
+            RoadTextureSourceRegistry.ClearRule(rule.id);
             if (m_RoadDefiningTextures.Count == 0)
             {
                 Mod.Log.Warn("Road texture generation skipped because the RoadEU source maps are not available yet");
@@ -344,6 +356,7 @@ namespace AutomaticTextureReplacer
                 {
                     RenderTexture atlas = null;
                     var changedAreas = new List<string>();
+                    var normalHueRegions = new List<RectInt>();
                     try
                     {
                         Texture2D sourceTexture = sourceMap.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
@@ -382,15 +395,43 @@ namespace AutomaticTextureReplacer
                                 continue;
                             }
 
-                            GetScaledRegion(region, atlas.width, atlas.height, out int x, out int y, out int width, out int height);
-                            float surfaceUvScale = Mathf.Abs(GetOriginalRoadSurfaceUvScale(replacementInfo));
-                            if (surfaceUvScale < 0.0001f) surfaceUvScale = 1f;
-                            ApplyTiledRegion(atlas, overlayAsset, overlayTexture, region.ScaleMode, surfaceUvScale,
-                                x, y, width, height, mapLayer.IsSrgb);
-                            changedAreas.Add(region.Name + " <- " + replacementInfo.Prefab.name);
-                            Mod.Log.InfoFormat("RoadEU region texture applied on GPU: area='{0}' ({1},{2},{3},{4}), surface='{5}', map='{6}', textureSource='{7}'",
-                                region.Name, x, y, width, height, replacementInfo.Prefab.name, sourceProperty,
-                                overlayAsset != null ? "RenderedArea asset reference" : "RenderedArea material");
+                            if (sourceProperty == "_NormalMap")
+                            {
+                                Material runtime = replacementInfo.RuntimeMaterial;
+                                Material original = replacementInfo.RenderedArea.m_Material;
+                                Mod.Log.InfoFormat(
+                                    "Road normal source diagnostics: rule={0}, area='{1}', surface='{2}', areaVersion={3}, prefabNormalOpacity={4}, prefabNormalAlphaSource={5}, roadFormat={6}, overlayAssetFormat={7}, overlayTextureFormat={8}, runtimeMaterial=[{9}], originalMaterial=[{10}]",
+                                    rule.id, region.Name, replacementInfo.Prefab.name, replacementInfo.RenderedArea.m_Version,
+                                    replacementInfo.RenderedArea.m_NormalOpacity, replacementInfo.RenderedArea.m_NormalAlphaSource,
+                                    sourceMap.format, overlayAsset != null ? overlayAsset.format.ToString() : "<none>",
+                                    overlayTexture != null ? overlayTexture.graphicsFormat.ToString() : "<asset>",
+                                    DescribeRoadNormalMaterial(runtime), DescribeRoadNormalMaterial(original));
+                            }
+
+                            string destinationProperty = region.GetDestinationProperty(sourceProperty);
+                            if (region.Id == "roadway")
+                            {
+                                RoadTextureSourceRegistry.Register(rule.id, destinationProperty, overlayAsset, overlayTexture);
+                                Mod.Log.InfoFormat("Roadway source map captured by the existing surface texture lookup: area='{0}', destination='{1}', surface='{2}', source='{3}', asset='{4}', texture='{5}'",
+                                    region.Name, destinationProperty, replacementInfo.Prefab.name, sourceProperty,
+                                    overlayAsset != null ? overlayAsset.name : "<none>",
+                                    overlayTexture != null ? overlayTexture.name + " " + overlayTexture.width + "x" + overlayTexture.height : "<asset>");
+                                continue;
+                            }
+                            else if (destinationProperty == sourceProperty)
+                            {
+                                GetScaledRegion(region, atlas.width, atlas.height, out int x, out int y, out int width, out int height);
+                                float surfaceUvScale = Mathf.Abs(GetOriginalRoadSurfaceUvScale(replacementInfo));
+                                if (surfaceUvScale < 0.0001f) surfaceUvScale = 1f;
+                                ApplyTiledRegion(atlas, overlayAsset, overlayTexture, region.ScaleMode, surfaceUvScale,
+                                    x, y, width, height, mapLayer.IsSrgb);
+                                changedAreas.Add(region.Name + " <- " + replacementInfo.Prefab.name);
+                                if (sourceProperty == "_NormalMap" && mapLayer.NormalHueRotationDegrees != 0f)
+                                    normalHueRegions.Add(new RectInt(x, atlas.height - y - height, width, height));
+                                Mod.Log.InfoFormat("RoadEU region texture applied on GPU: area='{0}' ({1},{2},{3},{4}), surface='{5}', map='{6}', textureSource='{7}'",
+                                    region.Name, x, y, width, height, replacementInfo.Prefab.name, sourceProperty,
+                                    overlayAsset != null ? "RenderedArea asset reference" : "RenderedArea material");
+                            }
                         }
 
                         if (changedAreas.Count == 0) continue;
@@ -403,49 +444,11 @@ namespace AutomaticTextureReplacer
                             Path = path,
                             MapProperty = sourceProperty,
                             Replacements = string.Join("; ", changedAreas),
+                            NormalHueRotationDegrees = mapLayer.NormalHueRotationDegrees,
+                            NormalHueRegions = normalHueRegions,
                         };
-                        outputs.Add(output);
-                        if (SystemInfo.supportsAsyncGPUReadback)
-                        {
-                            lock (generation) generation.PendingReadbacks++;
-                            RenderTexture readbackAtlas = atlas;
-                            atlas = null;
-                            try
-                            {
-                                AsyncGPUReadback.Request(readbackAtlas, 0, TextureFormat.RGBA32, request =>
-                                {
-                                    try
-                                    {
-                                        if (request.hasError)
-                                            throw new InvalidOperationException("AsyncGPUReadback failed for " + output.MapProperty);
-                                        if (!generation.Token.IsCancellationRequested)
-                                            output.Pixels = request.GetData<Color32>().ToArray();
-                                    }
-                                    catch (Exception exception)
-                                    {
-                                        lock (generation)
-                                            if (generation.CaptureError == null) generation.CaptureError = exception;
-                                    }
-                                    finally
-                                    {
-                                        RenderTexture.ReleaseTemporary(readbackAtlas);
-                                        lock (generation) generation.PendingReadbacks--;
-                                        CompleteRoadTexturePreparation(generation);
-                                    }
-                                });
-                            }
-                            catch (Exception exception)
-                            {
-                                atlas = readbackAtlas;
-                                lock (generation) generation.PendingReadbacks--;
-                                if (generation.CaptureError == null) generation.CaptureError = exception;
-                                throw;
-                            }
-                        }
-                        else
-                        {
-                            output.Pixels = CaptureRenderTexturePixels(atlas, mapLayer.IsSrgb);
-                        }
+                        outputs.Add(CaptureRoadTextureOutput(atlas, output, generation, mapLayer.IsSrgb));
+                        atlas = null;
                     }
                     finally
                     {
@@ -478,6 +481,16 @@ namespace AutomaticTextureReplacer
             if (materialTexture == null && fallbackMaterial != null && fallbackMaterial.HasProperty(propertyId))
                 materialTexture = fallbackMaterial.GetTexture(propertyId);
             return materialTexture != null;
+        }
+
+        private static string DescribeRoadNormalMaterial(Material material)
+        {
+            if (material == null) return "<unavailable>";
+            string[] properties = { "_NormalOpacity", "_NormalAlphaSource", "_NormalScale", "_BumpScale", "_Metallic", "_Smoothness" };
+            string values = string.Join(", ", properties.Where(material.HasProperty)
+                .Select(property => property + "=" + material.GetFloat(property)));
+            return "shader=" + (material.shader != null ? material.shader.name : "<none>") +
+                "; keywords=" + string.Join(",", material.shaderKeywords) + "; " + values;
         }
 
         private float GetOriginalRoadSurfaceUvScale(RoadSurfaceInfo surface)
@@ -577,6 +590,74 @@ namespace AutomaticTextureReplacer
                 }
                 if (target != null) RenderTexture.ReleaseTemporary(target);
                 if (loaded && ownsTexture) sourceAsset.Unload();
+            }
+        }
+
+        private RoadTexturePngOutput CaptureRoadTextureOutput(RenderTexture texture, RoadTexturePngOutput output,
+            RoadTextureGenerationState generation, bool isSrgb = false)
+        {
+            if (!SystemInfo.supportsAsyncGPUReadback)
+            {
+                output.Pixels = CaptureRenderTexturePixels(texture, isSrgb);
+                if (output.MapProperty == "_NormalMap") ApplyNormalHueShift(output.Pixels, output.Width,
+                    output.NormalHueRegions, output.NormalHueRotationDegrees);
+                return output;
+            }
+
+            lock (generation) generation.PendingReadbacks++;
+            try
+            {
+                AsyncGPUReadback.Request(texture, 0, TextureFormat.RGBA32, request =>
+                {
+                    try
+                    {
+                        if (request.hasError) throw new InvalidOperationException("AsyncGPUReadback failed for " + output.MapProperty);
+                        if (!generation.Token.IsCancellationRequested)
+                        {
+                            output.Pixels = request.GetData<Color32>().ToArray();
+                            if (output.MapProperty == "_NormalMap") ApplyNormalHueShift(output.Pixels, output.Width,
+                                output.NormalHueRegions, output.NormalHueRotationDegrees);
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        lock (generation) if (generation.CaptureError == null) generation.CaptureError = exception;
+                    }
+                    finally
+                    {
+                        RenderTexture.ReleaseTemporary(texture);
+                        lock (generation) generation.PendingReadbacks--;
+                        CompleteRoadTexturePreparation(generation);
+                    }
+                });
+                return output;
+            }
+            catch (Exception exception)
+            {
+                lock (generation) generation.PendingReadbacks--;
+                if (generation.CaptureError == null) generation.CaptureError = exception;
+                throw;
+            }
+        }
+
+        private static void ApplyNormalHueShift(Color32[] pixels, int textureWidth, List<RectInt> regions, float degrees)
+        {
+            if (pixels == null || regions == null || Mathf.Abs(degrees) < 0.001f) return;
+            foreach (RectInt region in regions)
+            {
+                int minX = Mathf.Clamp(region.xMin, 0, textureWidth);
+                int maxX = Mathf.Clamp(region.xMax, 0, textureWidth);
+                for (int y = Mathf.Max(0, region.yMin); y < region.yMax; y++)
+                {
+                    int rowStart = y * textureWidth;
+                    if (rowStart >= pixels.Length) break;
+                    for (int x = minX; x < maxX; x++)
+                    {
+                        int index = rowStart + x;
+                        if (index >= 0 && index < pixels.Length)
+                            pixels[index] = RoadNormalHueTransform.ShiftHue(pixels[index], degrees);
+                    }
+                }
             }
         }
 

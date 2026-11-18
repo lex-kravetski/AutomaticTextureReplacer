@@ -50,6 +50,7 @@ namespace AutomaticTextureReplacer
         private readonly Dictionary<string, NetGeometryPrefab> m_ReplacementRoadPrefabs = new Dictionary<string, NetGeometryPrefab>(StringComparer.Ordinal);
         private readonly Dictionary<string, SurfaceAsset> m_ReplacementMaterials = new Dictionary<string, SurfaceAsset>(StringComparer.Ordinal);
         private readonly Dictionary<string, TextureAsset> m_ReplacementTextures = new Dictionary<string, TextureAsset>(StringComparer.Ordinal);
+        private readonly Dictionary<string, TextureAsset> m_RoadwaySourceTextures = new Dictionary<string, TextureAsset>(StringComparer.Ordinal);
         private bool m_SmallRoadReplacementTreeLogged;
         private bool m_RuntimePrefabsPendingUpdate;
         private int m_RoadReplacementWatchFrames;
@@ -209,12 +210,16 @@ namespace AutomaticTextureReplacer
             var sourceIds = new HashSet<string>(rule.sourceRoadIds ?? new List<string>(), StringComparer.Ordinal);
             var result = new HashSet<Entity>();
             if (sourceIds.Count == 0) return result;
+            // Replacement road prefabs are registered in the same PrefabSystem
+            // as the originals. They must never become sources of another clone.
+            var replacementPrefabs = new HashSet<NetGeometryPrefab>(m_ReplacementRoadPrefabs.Values);
 
             using (NativeArray<Entity> prefabs = m_RoadPrefabQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in prefabs)
                 {
                     if (!m_PrefabSystem.TryGetPrefab<NetGeometryPrefab>(entity, out NetGeometryPrefab geometry) || geometry == null) continue;
+                    if (replacementPrefabs.Contains(geometry)) continue;
                     string prefabId = geometry.GetPrefabID().ToString();
                     bool matches = sourceIds.Contains(prefabId) ||
                         (sourceIds.Contains(RoadAtlasRegions.RoadEuCatalogId) && GeometryUsesRoadEu(geometry));
@@ -876,8 +881,31 @@ namespace AutomaticTextureReplacer
                 loaded = true;
                 var textures = source.textures.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
                 int changedMaps = 0;
+                bool usesRoadwayWorldspaceMaterial = textures.TryGetValue("_WorldspaceAlbedo", out TextureAsset sourceWorldspaceAlbedo) &&
+                    sourceWorldspaceAlbedo != null && sourceWorldspaceAlbedo.name.StartsWith("RoadEUWorldspace_BaseColor_", StringComparison.Ordinal);
                 foreach (RoadAtlasTextureLayer layer in RoadAtlasRegions.RoadEuTextureLayers)
                 {
+                    RoadAtlasRegion roadway = RoadAtlasRegions.RoadEu.First(region => region.Id == "roadway");
+                    if (usesRoadwayWorldspaceMaterial)
+                    {
+                        string worldspaceProperty = roadway.GetDestinationProperty(layer.MaterialProperty);
+                        string expectedPrefix = worldspaceProperty == "_WorldspaceAlbedo" ? "RoadEUWorldspace_BaseColor_" :
+                            worldspaceProperty == "_WorldspaceNormalMap" ? "RoadEUWorldspace_Normal_" :
+                            worldspaceProperty == "_WorldspaceMaskMap" ? "RoadEUWorldspace_MaskMap_" : null;
+                        if (expectedPrefix != null && textures.TryGetValue(worldspaceProperty, out TextureAsset originalWorldspace) &&
+                            originalWorldspace != null && originalWorldspace.name.StartsWith(expectedPrefix, StringComparison.Ordinal))
+                        {
+                            TextureAsset replacement = GetOrCreateRoadwayTexture(ruleId, worldspaceProperty, layer);
+                            if (replacement != null)
+                            {
+                                textures[worldspaceProperty] = replacement;
+                                changedMaps++;
+                            }
+                        }
+                        // This SurfaceAsset is shared by roadway and sidewalk meshes:
+                        // assign its worldspace roadway maps and its UV-atlas sidewalk maps.
+                    }
+
                     if (!textures.TryGetValue(layer.MaterialProperty, out TextureAsset original) || original == null ||
                         !string.Equals(original.name, layer.TextureAssetName, StringComparison.Ordinal)) continue;
                     TextureAsset generated = GetOrCreateGeneratedTexture(ruleId, variantKey, layer);
@@ -885,6 +913,8 @@ namespace AutomaticTextureReplacer
                     textures[layer.MaterialProperty] = generated;
                     changedMaps++;
                 }
+                // TEMP test retained for reference: clearing _WorldspaceAlbedo made the roadway white.
+                // if (changedMaps != 0 && textures.ContainsKey("_WorldspaceAlbedo")) textures["_WorldspaceAlbedo"] = null;
                 if (cachedMaterial != null)
                 {
                     cachedMaterial.UpdateTextures(textures);
@@ -944,6 +974,84 @@ namespace AutomaticTextureReplacer
             catch (Exception exception)
             {
                 Mod.Log.Warn(exception, "Road material comparison failed");
+            }
+        }
+
+        private TextureAsset GetOrCreateRoadwayTexture(int ruleId, string destinationProperty, RoadAtlasTextureLayer layer)
+        {
+            if (!RoadTextureSourceRegistry.TryGet(ruleId, destinationProperty, out TextureAsset sourceAsset, out Texture sourceTexture))
+            {
+                Mod.Log.WarnFormat("Roadway source texture was not captured by the catalog texture lookup: ruleId='{0}', destination='{1}'",
+                    ruleId, destinationProperty);
+                return null;
+            }
+            if (sourceAsset != null && destinationProperty != "_WorldspaceNormalMap") return sourceAsset;
+
+            string sourceId = sourceAsset != null ? sourceAsset.id.ToString() : sourceTexture != null ? sourceTexture.GetInstanceID().ToString() : "none";
+            string key = ruleId + "|" + destinationProperty + "|" + sourceId + "|hue=" + layer.NormalHueRotationDegrees;
+            if (m_RoadwaySourceTextures.TryGetValue(key, out TextureAsset cached)) return cached;
+            bool loadedSourceAsset = false;
+            if (sourceTexture == null && sourceAsset != null)
+            {
+                sourceTexture = sourceAsset.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
+                loadedSourceAsset = sourceTexture != null;
+                if (sourceTexture == null)
+                {
+                    sourceAsset.Unload();
+                    return null;
+                }
+            }
+            if (sourceTexture == null) return null;
+
+            Texture2D copy = null;
+            RenderTexture target = null;
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                bool isSrgb = layer.IsSrgb;
+                target = RenderTexture.GetTemporary(sourceTexture.width, sourceTexture.height, 0,
+                    RenderTextureFormat.ARGB32, isSrgb ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
+                Graphics.Blit(sourceTexture, target);
+                RenderTexture.active = target;
+                copy = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32,
+                    sourceTexture.mipmapCount > 1, !isSrgb);
+                copy.ReadPixels(new Rect(0, 0, sourceTexture.width, sourceTexture.height), 0, 0, false);
+                if (destinationProperty == "_WorldspaceNormalMap" && layer.NormalHueRotationDegrees != 0f)
+                {
+                    Color32[] pixels = copy.GetPixels32();
+                    for (int index = 0; index < pixels.Length; index++)
+                        pixels[index] = RoadNormalHueTransform.ShiftHue(pixels[index], layer.NormalHueRotationDegrees);
+                    copy.SetPixels32(pixels);
+                }
+                copy.wrapModeU = sourceTexture.wrapModeU;
+                copy.wrapModeV = sourceTexture.wrapModeV;
+                copy.filterMode = sourceTexture.filterMode;
+                copy.anisoLevel = sourceTexture.anisoLevel;
+                copy.Apply(updateMipmaps: sourceTexture.mipmapCount > 1, makeNoLongerReadable: false);
+                copy.name = "RoadEU_Rule_" + ruleId + destinationProperty;
+                TextureAsset registered = m_RuntimeAssetDatabase.AddAsset<TextureAsset, Texture>(
+                    AssetDataPath.Create("Replacement Solutions Runtime", "RoadTexture_Rule_" + ruleId + destinationProperty),
+                    copy, CreateRuntimeGuid("Texture/" + key));
+                if (registered == null) throw new InvalidOperationException("Could not register the captured roadway texture");
+                m_RoadwaySourceTextures[key] = registered;
+                Mod.Log.InfoFormat("Roadway texture registered from captured surface texture: ruleId='{0}', destination='{1}', sourceAsset='{2}', sourceTexture='{3}', size={4}x{5}, hueShift={6}",
+                    ruleId, destinationProperty, sourceAsset != null ? sourceAsset.name : "<material texture>",
+                    sourceTexture.name, copy.width, copy.height,
+                    destinationProperty == "_WorldspaceNormalMap" ? layer.NormalHueRotationDegrees : 0f);
+                copy = null;
+                return registered;
+            }
+            catch (Exception exception)
+            {
+                Mod.Log.Error(exception, "Could not prepare captured roadway texture " + destinationProperty);
+                return null;
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                if (target != null) RenderTexture.ReleaseTemporary(target);
+                if (loadedSourceAsset) sourceAsset.Unload();
+                if (copy != null) UnityEngine.Object.Destroy(copy);
             }
         }
 
