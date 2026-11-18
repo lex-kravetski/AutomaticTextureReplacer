@@ -83,6 +83,36 @@ namespace AutomaticTextureReplacer
             }
         }
 
+        private void TryScheduleRoadTexturePreGeneration()
+        {
+            if (m_RoadStartupTexturePreGenerationScheduled || !m_RoadCatalogBuildCompleted || !m_SurfaceCatalogBuildStarted)
+                return;
+            if (!m_RoadDefiningTextures.TryGetValue("_BaseColorMap", out TextureAsset baseColor) || baseColor == null)
+                return;
+
+            m_RoadStartupTexturePreGenerationScheduled = true;
+            List<RoadTextureRule> rules = ParseRoadTextureRules(Mod.Settings?.RoadRulesJson ?? "[]");
+            RoadTextureRule[] rulesToGenerate = rules
+                .Where(rule => rule != null && rule.roadAreaReplacements != null && rule.roadAreaReplacements.Count != 0)
+                .ToArray();
+            if (rulesToGenerate.Length == 0)
+            {
+                Mod.Log.Info("Road startup texture pre-generation skipped: no saved road rules have area replacements");
+                return;
+            }
+
+            foreach (RoadTextureRule rule in rulesToGenerate)
+            {
+                RoadTextureGenerationState generation = BeginRoadTextureGeneration(rule.id);
+                generation.PendingRule = rule;
+                generation.CaptureAfterFrame = m_RoadTextureFrameCounter + 1;
+            }
+
+            Mod.Log.InfoFormat("Road startup texture pre-generation scheduled: rules={0}, source='RoadEU', areaReplacements={1}; existing rules will be rendered without applying road replacements",
+                rulesToGenerate.Length,
+                rulesToGenerate.Sum(rule => rule.roadAreaReplacements.Count));
+        }
+
         private void CompleteRoadTexturePreparation(RoadTextureGenerationState generation)
         {
             lock (generation)
@@ -201,7 +231,10 @@ namespace AutomaticTextureReplacer
                 if (m_PendingRoadReplacementRules.Remove(entry.Key))
                 {
                     if (succeeded)
-                        Mod.Log.InfoFormat("Road replacement stub invoked after texture preparation: ruleId='{0}'", entry.Key);
+                    {
+                        RoadReplacementSystem.QueueReplacement(entry.Key.ToString(), Mod.Settings?.RoadRulesJson ?? "[]");
+                        Mod.Log.InfoFormat("Road replacement queued after texture preparation: ruleId='{0}'", entry.Key);
+                    }
                     else
                         Mod.Log.WarnFormat("Road replacement was not started because texture preparation did not complete: ruleId='{0}'", entry.Key);
                 }

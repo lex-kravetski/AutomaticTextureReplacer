@@ -61,7 +61,9 @@ namespace AutomaticTextureReplacer
         {
             new RoadAtlasTextureLayer("_BaseColorMap", "RoadEU_BaseColor_fcd6e988046753d4682cb5472360a801", true),
             new RoadAtlasTextureLayer("_NormalMap", "RoadEU_Normal_0f7d11c19a1d7dc4aba9ef85b90f7f8c", false),
-            new RoadAtlasTextureLayer("_MaskMap", "RoadEU_MaskMap_2c3140860fed2b34da0146470995c6c6", false),
+            // Temporarily keep the original road mask. The generated MaskMap is almost entirely black
+            // and can make the road appear as isolated dark/bright fragments during replacement.
+            // new RoadAtlasTextureLayer("_MaskMap", "RoadEU_MaskMap_2c3140860fed2b34da0146470995c6c6", false),
         };
 
         public static readonly IReadOnlyList<RoadAtlasRegion> RoadEu = new List<RoadAtlasRegion>

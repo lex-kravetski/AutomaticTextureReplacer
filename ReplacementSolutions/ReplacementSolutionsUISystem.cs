@@ -93,6 +93,7 @@ namespace AutomaticTextureReplacer
         private EntityQuery m_RoadPrefabQuery;
         private string m_LastRoadCatalog;
         private bool m_RoadCatalogBuildCompleted;
+        private bool m_RoadStartupTexturePreGenerationScheduled;
         private readonly Dictionary<string, TextureAsset> m_RoadDefiningTextures = new Dictionary<string, TextureAsset>(StringComparer.Ordinal);
         private readonly Dictionary<int, RoadTextureGenerationState> m_RoadTextureGenerationStates = new Dictionary<int, RoadTextureGenerationState>();
         private readonly HashSet<int> m_PendingRoadReplacementRules = new HashSet<int>();
@@ -475,6 +476,8 @@ namespace AutomaticTextureReplacer
                 }
             }
 
+            TryScheduleRoadTexturePreGeneration();
+
             if (m_SurfaceCatalogBuildTask != null && m_SurfaceCatalogBuildTask.IsCompleted)
             {
                 if (m_SurfaceCatalogBuildTask.Status == TaskStatus.RanToCompletion)
@@ -767,12 +770,12 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            Mod.Log.InfoFormat("Road replacement stub invoked: ruleId='{0}'", ruleId);
+            RoadReplacementSystem.QueueReplacement(ruleId.ToString(), Mod.Settings?.RoadRulesJson ?? "[]");
         }
 
         private void RevertAllRoads()
         {
-            Mod.Log.Info("Road revert-all stub invoked");
+            RoadReplacementSystem.QueueRevertAll();
         }
 
         private void SetAlsoNewRoads(bool value)

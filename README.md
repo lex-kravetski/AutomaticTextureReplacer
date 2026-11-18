@@ -2,6 +2,8 @@
 
 A Cities: Skylines II mod for replacing building, hand-drawn, and specialized-industry surfaces. Rules can run on existing areas through the dialog buttons or automatically when new buildings and industry areas are created. A transparent surface is available for hiding unwanted surface artwork.
 
+Road texture replacement is experimental: replacement textures can be displayed on roads, but the feature is unfinished and known issues remain.
+
 ## Build
 
 The project requires the .NET SDK, Cities: Skylines II modding tools, and the `CSII_TOOLPATH` user environment variable pointing to the modding tools directory.

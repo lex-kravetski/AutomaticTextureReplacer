@@ -6,9 +6,13 @@ using Colossal.Logging;
 using Colossal.UI;
 using Game.Tools;
 using Game.Common;
+using Game.Net;
+using Game.Prefabs;
+using Game.Rendering;
 using System;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 
 namespace AutomaticTextureReplacer
 {
@@ -25,6 +29,7 @@ namespace AutomaticTextureReplacer
         {
             ClearDiagnosticLog();
             Log.Info("=== Replacement Solutions session started ===");
+            Log.InfoFormat("Replacement Solutions loaded assembly: location='{0}', version='{1}'", Assembly.GetExecutingAssembly().Location, Assembly.GetExecutingAssembly().GetName().Version);
 
             bool migratedSettings = MigrateLegacySettingsFile();
             Settings = new ReplacementSolutionsSettings(this);
@@ -60,6 +65,7 @@ namespace AutomaticTextureReplacer
             // TEMP diagnostic: Small Road texture-layer inventory, re-enable only when needed.
             // updateSystem.UpdateAt<SmallRoadPrefabDumpSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateBefore<SurfaceReplacementSystem, ToolOutputBarrier>(SystemUpdatePhase.ToolUpdate);
+            updateSystem.UpdateBefore<RoadReplacementSystem, PrefabInitializeSystem>(SystemUpdatePhase.PrefabUpdate);
             updateSystem.UpdateBefore<NewBuildingSurfaceReplacementSystem, GenerateAreasSystem>(SystemUpdatePhase.Modification1);
         }
 
