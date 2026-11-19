@@ -94,11 +94,11 @@ namespace AutomaticTextureReplacer
                 scaleMode: RoadAtlasScaleMode.FitRegionWidth,
                 colorTextureProperty: "_WorldspaceAlbedo", normalTextureProperty: "_WorldspaceNormalMap",
                 maskTextureProperty: "_WorldspaceMaskMap"),
-            new RoadAtlasRegion("inner-curb", "Inner curb", 575, 0, 33, usesFullTextureHeight: true),
-            new RoadAtlasRegion("sidewalk", "Sidewalk", 635, 0, 884, usesFullTextureHeight: true,
+            new RoadAtlasRegion("inner-curb", "Inner curb", 546, 0, 89, usesFullTextureHeight: true),
+            new RoadAtlasRegion("sidewalk", "Sidewalk", 638, 0, 882, usesFullTextureHeight: true,
                 scaleMode: RoadAtlasScaleMode.FitRegionWidth),
-            new RoadAtlasRegion("outer-curb", "Outer curb", 1551, 0, 27, usesFullTextureHeight: true),
-            new RoadAtlasRegion("median", "Median", 1664, 63, 83, 448),
+            new RoadAtlasRegion("outer-curb", "Outer curb", 1520, 0, 96, usesFullTextureHeight: true),
+            new RoadAtlasRegion("median", "Median", 1616, 4, 207, 932),
         };
     }
 
@@ -120,16 +120,16 @@ namespace AutomaticTextureReplacer
             }
         }
 
-        public static void Register(int ruleId, string property, TextureAsset asset, Texture texture)
+        public static void Register(int ruleId, string regionId, string property, TextureAsset asset, Texture texture)
         {
-            lock (s_Lock) s_Textures[ruleId + "|" + property] = (asset, texture);
+            lock (s_Lock) s_Textures[ruleId + "|" + regionId + "|" + property] = (asset, texture);
         }
 
-        public static bool TryGet(int ruleId, string property, out TextureAsset asset, out Texture texture)
+        public static bool TryGet(int ruleId, string regionId, string property, out TextureAsset asset, out Texture texture)
         {
             lock (s_Lock)
             {
-                if (s_Textures.TryGetValue(ruleId + "|" + property, out var source))
+                if (s_Textures.TryGetValue(ruleId + "|" + regionId + "|" + property, out var source))
                 {
                     asset = source.Asset;
                     texture = source.Texture;

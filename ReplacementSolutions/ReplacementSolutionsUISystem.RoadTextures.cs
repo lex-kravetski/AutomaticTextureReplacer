@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,48 +10,25 @@ using Game.Prefabs;
 using Game.Rendering;
 using Unity.Collections;
 using Unity.Entities;
-using UnityEngine.Rendering;
 using UnityEngine;
 
 namespace AutomaticTextureReplacer
 {
     public sealed partial class ReplacementSolutionsUISystem
     {
-        private static readonly uint[] s_PngCrcTable = BuildPngCrcTable();
-
         private int m_RoadTextureFrameCounter;
 
         private sealed class RoadTextureGenerationState
         {
-            public int Generation { get; set; }
             public CancellationTokenSource Cancellation { get; set; }
             public CancellationToken Token { get; set; }
             public Task Task { get; set; }
             public TaskCompletionSource<bool> Completion { get; set; }
-            public List<RoadTexturePngOutput> Outputs { get; set; }
-            public int PendingReadbacks { get; set; }
             public bool CaptureFinished { get; set; }
-            public bool WorkerStarted { get; set; }
             public Exception CaptureError { get; set; }
             public RoadTextureRule PendingRule { get; set; }
             public int CaptureAfterFrame { get; set; }
         }
-
-        private sealed class RoadTexturePngOutput
-        {
-            public int RuleId { get; set; }
-            public int Generation { get; set; }
-            public int Width { get; set; }
-            public int Height { get; set; }
-            public Color32[] Pixels { get; set; }
-            public string Path { get; set; }
-            public string MapProperty { get; set; }
-            public string Replacements { get; set; }
-            public float NormalHueRotationDegrees { get; set; }
-            public List<RectInt> NormalHueRegions { get; set; }
-        }
-
-        private int m_RoadTextureGenerationCounter;
 
         private void GenerateChangedRoadAreaTextures(string oldJson, string newJson)
         {
@@ -99,7 +75,7 @@ namespace AutomaticTextureReplacer
                 .ToArray();
             if (rulesToGenerate.Length == 0)
             {
-                Mod.Log.Info("Road startup texture pre-generation skipped: no saved road rules have area replacements");
+                Mod.Log.Info("Road startup texture capture skipped: no saved road rules have area replacements");
                 return;
             }
 
@@ -110,18 +86,14 @@ namespace AutomaticTextureReplacer
                 generation.CaptureAfterFrame = m_RoadTextureFrameCounter + 1;
             }
 
-            Mod.Log.InfoFormat("Road startup texture pre-generation scheduled: rules={0}, source='RoadEU', areaReplacements={1}; existing rules will be rendered without applying road replacements",
+            Mod.Log.InfoFormat("Road startup texture source capture scheduled: rules={0}, areaReplacements={1}",
                 rulesToGenerate.Length,
                 rulesToGenerate.Sum(rule => rule.roadAreaReplacements.Count));
         }
 
         private void CompleteRoadTexturePreparation(RoadTextureGenerationState generation)
         {
-            lock (generation)
-            {
-                if (!generation.CaptureFinished || generation.PendingReadbacks != 0 || generation.WorkerStarted) return;
-                generation.WorkerStarted = true;
-            }
+            if (!generation.CaptureFinished) return;
 
             if (generation.Token.IsCancellationRequested)
             {
@@ -134,13 +106,7 @@ namespace AutomaticTextureReplacer
                 return;
             }
 
-            Task.Run(() => WriteRoadTexturePngs(generation.Outputs ?? new List<RoadTexturePngOutput>(), generation))
-                .ContinueWith(task =>
-                {
-                    if (task.IsCanceled) generation.Completion.TrySetCanceled();
-                    else if (task.IsFaulted) generation.Completion.TrySetException(task.Exception.InnerExceptions);
-                    else generation.Completion.TrySetResult(true);
-                }, TaskScheduler.Default);
+            generation.Completion.TrySetResult(true);
         }
 
         private RoadTextureGenerationState BeginRoadTextureGeneration(int ruleId)
@@ -151,7 +117,6 @@ namespace AutomaticTextureReplacer
                     CancelRoadTextureGenerationState(previous);
                 var state = new RoadTextureGenerationState
                 {
-                    Generation = Interlocked.Increment(ref m_RoadTextureGenerationCounter),
                     Cancellation = new CancellationTokenSource(),
                     Completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
                 };
@@ -195,9 +160,7 @@ namespace AutomaticTextureReplacer
                     state.PendingRule = null;
                     try
                     {
-                        List<RoadTexturePngOutput> outputs = GenerateRoadRuleTextures(rule, state);
-                        state.Outputs = outputs;
-                        DeleteObsoleteGeneratedRoadMaps(rule.id, outputs, state);
+                        GenerateRoadRuleTextures(rule, state);
                     }
                     catch (Exception exception)
                     {
@@ -220,14 +183,9 @@ namespace AutomaticTextureReplacer
 
                 bool succeeded = state.Task.Status == TaskStatus.RanToCompletion;
                 if (state.Task.IsFaulted)
-                    Mod.Log.Error(state.Task.Exception, "Background road texture preparation failed for rule " + entry.Key);
+                    Mod.Log.Error(state.Task.Exception, "Road texture source capture failed for rule " + entry.Key);
                 else if (succeeded)
-                {
-                    foreach (RoadTexturePngOutput output in state.Outputs ?? new List<RoadTexturePngOutput>())
-                        Mod.Log.InfoFormat("Road texture generated: source='RoadEU', map='{0}', resolution={1}x{2}, replacements=[{3}], file='{4}'",
-                            output.MapProperty, output.Width, output.Height, output.Replacements, output.Path);
-                    Mod.Log.InfoFormat("Background road texture preparation completed: ruleId='{0}'", entry.Key);
-                }
+                    Mod.Log.InfoFormat("Road texture source capture completed: ruleId='{0}'", entry.Key);
 
                 state.Cancellation.Dispose();
                 if (m_PendingRoadReplacementRules.Remove(entry.Key))
@@ -239,34 +197,6 @@ namespace AutomaticTextureReplacer
                     }
                     else
                         Mod.Log.WarnFormat("Road replacement was not started because texture preparation did not complete: ruleId='{0}'", entry.Key);
-                }
-            }
-        }
-
-        private void DeleteObsoleteGeneratedRoadMaps(int ruleId, List<RoadTexturePngOutput> outputs, RoadTextureGenerationState generation)
-        {
-            string directory = Path.Combine(GetModsDataRoot(), "Replacement Solutions", "textures");
-            var outputPaths = new HashSet<string>(outputs.Select(output => output.Path), StringComparer.OrdinalIgnoreCase);
-            lock (m_RoadTextureGenerationLock)
-            {
-                if (!m_RoadTextureGenerationStates.TryGetValue(ruleId, out RoadTextureGenerationState current) ||
-                    !ReferenceEquals(current, generation)) return;
-                var outputProperties = new HashSet<string>(StringComparer.Ordinal);
-                foreach (RoadAtlasTextureLayer layer in RoadAtlasRegions.RoadEuTextureLayers)
-                {
-                    outputProperties.Add(layer.MaterialProperty);
-                    outputProperties.Add(RoadAtlasRegions.RoadEu.First(region => region.Id == "roadway")
-                        .GetDestinationProperty(layer.MaterialProperty));
-                }
-                // Remove a mask output left by earlier experimental builds while mask baking is disabled.
-                outputProperties.Add("_MaskMap");
-                foreach (string property in outputProperties)
-                {
-                    string fileName = SanitizePrefabName("RoadEU_Rule_" + ruleId + "_" + property.Trim('_')) + ".png";
-                    string path = Path.Combine(directory, fileName);
-                    if (outputPaths.Contains(path) || !File.Exists(path)) continue;
-                    try { File.Delete(path); }
-                    catch (Exception exception) { Mod.Log.Warn(exception, "Could not remove an obsolete generated road map: " + path); }
                 }
             }
         }
@@ -295,15 +225,9 @@ namespace AutomaticTextureReplacer
             }
         }
 
-        private List<RoadTexturePngOutput> GenerateRoadRuleTextures(RoadTextureRule rule, RoadTextureGenerationState generation)
+        private void GenerateRoadRuleTextures(RoadTextureRule rule, RoadTextureGenerationState generation)
         {
-            var outputs = new List<RoadTexturePngOutput>();
             RoadTextureSourceRegistry.ClearRule(rule.id);
-            if (m_RoadDefiningTextures.Count == 0)
-            {
-                Mod.Log.Warn("Road texture generation skipped because the RoadEU source maps are not available yet");
-                return outputs;
-            }
 
             var replacementSurfaces = new Dictionary<string, RoadSurfaceInfo>(StringComparer.Ordinal);
             using (NativeArray<Entity> entities = m_SurfaceQuery.ToEntityArray(Allocator.Temp))
@@ -325,143 +249,48 @@ namespace AutomaticTextureReplacer
                 }
             }
 
-            string directory = Path.Combine(GetModsDataRoot(), "Replacement Solutions", "textures");
-            try
+            DeleteGeneratedRoadTextures(rule.id);
+            foreach (KeyValuePair<string, string> replacement in rule.roadAreaReplacements ?? new Dictionary<string, string>())
             {
-                Directory.CreateDirectory(directory);
-            }
-            catch (Exception exception)
-            {
-                Mod.Log.Error(exception, "Could not create the temporary road texture directory: " + directory);
-                return outputs;
-            }
-            DeleteObsoleteStandaloneRegionTextures(directory);
-
-            foreach (RoadAtlasTextureLayer mapLayer in RoadAtlasRegions.RoadEuTextureLayers)
-            {
-                string sourceProperty = mapLayer.MaterialProperty;
-                if (!m_RoadDefiningTextures.TryGetValue(sourceProperty, out TextureAsset sourceMap) || sourceMap == null ||
-                    !string.Equals(sourceMap.name, mapLayer.TextureAssetName, StringComparison.Ordinal))
+                if (string.IsNullOrWhiteSpace(replacement.Value)) continue;
+                RoadAtlasRegion region = RoadAtlasRegions.RoadEu.FirstOrDefault(item => item.Id == replacement.Key);
+                if (region == null)
+                {
+                    Mod.Log.WarnFormat("Road texture replacement region is not defined: area='{0}'", replacement.Key);
                     continue;
-
-                string fileName = SanitizePrefabName("RoadEU_Rule_" + rule.id + "_" + sourceProperty.Trim('_')) + ".png";
-                string path = Path.Combine(directory, fileName);
-                string[] replacements = rule.roadAreaReplacements
-                    .Where(entry => !string.IsNullOrWhiteSpace(entry.Value))
-                    .Select(entry => entry.Key + "=" + entry.Value)
-                    .ToArray();
-                if (replacements.Length == 0) continue;
-
-                try
-                {
-                    RenderTexture atlas = null;
-                    var changedAreas = new List<string>();
-                    var normalHueRegions = new List<RectInt>();
-                    try
-                    {
-                        Texture2D sourceTexture = sourceMap.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
-                        bool sourceLoaded = true;
-                        if (sourceTexture == null) throw new InvalidOperationException("Source TextureAsset returned no Texture2D");
-                        try
-                        {
-                            atlas = RenderTexture.GetTemporary(sourceTexture.width, sourceTexture.height, 0,
-                                RenderTextureFormat.ARGB32, mapLayer.IsSrgb ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
-                            Graphics.Blit(sourceTexture, atlas);
-                        }
-                        finally
-                        {
-                            if (sourceLoaded) sourceMap.Unload();
-                        }
-
-                        foreach (KeyValuePair<string, string> replacement in rule.roadAreaReplacements)
-                        {
-                            RoadAtlasRegion region = RoadAtlasRegions.RoadEu.FirstOrDefault(item => item.Id == replacement.Key);
-                            if (region == null)
-                            {
-                                Mod.Log.WarnFormat("Road texture region is not defined: area='{0}'", replacement.Key);
-                                continue;
-                            }
-                            if (!replacementSurfaces.TryGetValue(replacement.Value, out RoadSurfaceInfo replacementInfo))
-                            {
-                                Mod.Log.WarnFormat("Road texture replacement surface was not found: surfaceId='{0}', area='{1}'", replacement.Value, region.Name);
-                                continue;
-                            }
-
-                            if (!TryGetRenderedAreaTexture(replacementInfo.RenderedArea, replacementInfo.RuntimeMaterial,
-                                sourceProperty, out TextureAsset overlayAsset, out Texture overlayTexture))
-                            {
-                                Mod.Log.InfoFormat("RoadEU map layer kept unchanged for area='{0}', replacementSurface='{1}', missingMap='{2}'",
-                                    region.Name, replacementInfo.Prefab.name, sourceProperty);
-                                continue;
-                            }
-
-                            if (sourceProperty == "_NormalMap")
-                            {
-                                Material runtime = replacementInfo.RuntimeMaterial;
-                                Material original = replacementInfo.RenderedArea.m_Material;
-                                Mod.Log.InfoFormat(
-                                    "Road normal source diagnostics: rule={0}, area='{1}', surface='{2}', areaVersion={3}, prefabNormalOpacity={4}, prefabNormalAlphaSource={5}, roadFormat={6}, overlayAssetFormat={7}, overlayTextureFormat={8}, runtimeMaterial=[{9}], originalMaterial=[{10}]",
-                                    rule.id, region.Name, replacementInfo.Prefab.name, replacementInfo.RenderedArea.m_Version,
-                                    replacementInfo.RenderedArea.m_NormalOpacity, replacementInfo.RenderedArea.m_NormalAlphaSource,
-                                    sourceMap.format, overlayAsset != null ? overlayAsset.format.ToString() : "<none>",
-                                    overlayTexture != null ? overlayTexture.graphicsFormat.ToString() : "<asset>",
-                                    DescribeRoadNormalMaterial(runtime), DescribeRoadNormalMaterial(original));
-                            }
-
-                            string destinationProperty = region.GetDestinationProperty(sourceProperty);
-                            if (region.Id == "roadway")
-                            {
-                                RoadTextureSourceRegistry.Register(rule.id, destinationProperty, overlayAsset, overlayTexture);
-                                Mod.Log.InfoFormat("Roadway source map captured by the existing surface texture lookup: area='{0}', destination='{1}', surface='{2}', source='{3}', asset='{4}', texture='{5}'",
-                                    region.Name, destinationProperty, replacementInfo.Prefab.name, sourceProperty,
-                                    overlayAsset != null ? overlayAsset.name : "<none>",
-                                    overlayTexture != null ? overlayTexture.name + " " + overlayTexture.width + "x" + overlayTexture.height : "<asset>");
-                                continue;
-                            }
-                            else if (destinationProperty == sourceProperty)
-                            {
-                                GetScaledRegion(region, atlas.width, atlas.height, out int x, out int y, out int width, out int height);
-                                float surfaceUvScale = Mathf.Abs(GetOriginalRoadSurfaceUvScale(replacementInfo));
-                                if (surfaceUvScale < 0.0001f) surfaceUvScale = 1f;
-                                ApplyTiledRegion(atlas, overlayAsset, overlayTexture, region.ScaleMode, surfaceUvScale,
-                                    x, y, width, height, mapLayer.IsSrgb);
-                                changedAreas.Add(region.Name + " <- " + replacementInfo.Prefab.name);
-                                if (sourceProperty == "_NormalMap" && mapLayer.NormalHueRotationDegrees != 0f)
-                                    normalHueRegions.Add(new RectInt(x, atlas.height - y - height, width, height));
-                                Mod.Log.InfoFormat("RoadEU region texture applied on GPU: area='{0}' ({1},{2},{3},{4}), surface='{5}', map='{6}', textureSource='{7}'",
-                                    region.Name, x, y, width, height, replacementInfo.Prefab.name, sourceProperty,
-                                    overlayAsset != null ? "RenderedArea asset reference" : "RenderedArea material");
-                            }
-                        }
-
-                        if (changedAreas.Count == 0) continue;
-                        var output = new RoadTexturePngOutput
-                        {
-                            RuleId = rule.id,
-                            Generation = generation.Generation,
-                            Width = atlas.width,
-                            Height = atlas.height,
-                            Path = path,
-                            MapProperty = sourceProperty,
-                            Replacements = string.Join("; ", changedAreas),
-                            NormalHueRotationDegrees = mapLayer.NormalHueRotationDegrees,
-                            NormalHueRegions = normalHueRegions,
-                        };
-                        outputs.Add(CaptureRoadTextureOutput(atlas, output, generation, mapLayer.IsSrgb));
-                        atlas = null;
-                    }
-                    finally
-                    {
-                        if (atlas != null) RenderTexture.ReleaseTemporary(atlas);
-                    }
                 }
-                catch (Exception exception)
+                if (!replacementSurfaces.TryGetValue(replacement.Value, out RoadSurfaceInfo replacementInfo))
                 {
-                    if (generation.CaptureError == null) generation.CaptureError = exception;
-                    Mod.Log.Error(exception, "Could not generate the full RoadEU texture map " + sourceProperty + " for rule " + rule.id);
+                    Mod.Log.WarnFormat("Road texture replacement surface was not found: surfaceId='{0}', area='{1}'", replacement.Value, region.Name);
+                    continue;
                 }
+
+                string colorProperty = region.Id == "roadway" ? "_WorldspaceAlbedo" : "_BaseColorMap";
+                string normalProperty = region.Id == "roadway" ? "_WorldspaceNormalMap" : "_NormalMap";
+                CaptureRoadSurfaceTexture(rule.id, region, replacementInfo, "_BaseColorMap", colorProperty);
+                CaptureRoadSurfaceTexture(rule.id, region, replacementInfo, "_NormalMap", normalProperty);
             }
-            return outputs;
+
+            Mod.Log.InfoFormat("Road texture inputs captured without atlas baking: ruleId='{0}', mappedRegions={1}",
+                rule.id, (rule.roadAreaReplacements ?? new Dictionary<string, string>()).Count);
+        }
+
+        private static void CaptureRoadSurfaceTexture(int ruleId, RoadAtlasRegion region, RoadSurfaceInfo replacement,
+            string sourceProperty, string destinationProperty)
+        {
+            if (!TryGetRenderedAreaTexture(replacement.RenderedArea, replacement.RuntimeMaterial,
+                sourceProperty, out TextureAsset asset, out Texture materialTexture))
+            {
+                Mod.Log.WarnFormat("Road replacement map not found: ruleId='{0}', area='{1}', surface='{2}', map='{3}'",
+                    ruleId, region.Name, replacement.Prefab.name, sourceProperty);
+                return;
+            }
+
+            RoadTextureSourceRegistry.Register(ruleId, region.Id, destinationProperty, asset, materialTexture);
+            Mod.Log.InfoFormat("Road texture input captured: ruleId='{0}', area='{1}', surface='{2}', source='{3}', destination='{4}', asset='{5}', texture='{6}'",
+                ruleId, region.Name, replacement.Prefab.name, sourceProperty, destinationProperty,
+                asset != null ? asset.name : "<material texture>",
+                materialTexture != null ? materialTexture.name + " " + materialTexture.width + "x" + materialTexture.height : "<asset>");
         }
 
         private static bool TryGetRenderedAreaTexture(RenderedArea renderedArea, Material fallbackMaterial, string property,
@@ -481,24 +310,6 @@ namespace AutomaticTextureReplacer
             if (materialTexture == null && fallbackMaterial != null && fallbackMaterial.HasProperty(propertyId))
                 materialTexture = fallbackMaterial.GetTexture(propertyId);
             return materialTexture != null;
-        }
-
-        private static string DescribeRoadNormalMaterial(Material material)
-        {
-            if (material == null) return "<unavailable>";
-            string[] properties = { "_NormalOpacity", "_NormalAlphaSource", "_NormalScale", "_BumpScale", "_Metallic", "_Smoothness" };
-            string values = string.Join(", ", properties.Where(material.HasProperty)
-                .Select(property => property + "=" + material.GetFloat(property)));
-            return "shader=" + (material.shader != null ? material.shader.name : "<none>") +
-                "; keywords=" + string.Join(",", material.shaderKeywords) + "; " + values;
-        }
-
-        private float GetOriginalRoadSurfaceUvScale(RoadSurfaceInfo surface)
-        {
-            string surfaceId = surface.Prefab.GetPrefabID().ToString();
-            if (m_SurfaceScaleBaseValues.TryGetValue(surfaceId, out float originalScale))
-                return originalScale;
-            return surface.RenderedArea.m_UVScale;
         }
 
         private sealed class RoadSurfaceInfo
@@ -522,319 +333,6 @@ namespace AutomaticTextureReplacer
                 : null;
         }
 
-        private static void GetScaledRegion(RoadAtlasRegion region, int textureWidth, int textureHeight,
-            out int x, out int y, out int width, out int height)
-        {
-            float scaleX = (float)textureWidth / RoadAtlasRegions.AtlasWidth;
-            float scaleY = (float)textureHeight / RoadAtlasRegions.AtlasHeight;
-            x = Mathf.RoundToInt(region.X * scaleX);
-            y = Mathf.RoundToInt(region.Y * scaleY);
-            width = Mathf.RoundToInt(region.Width * scaleX);
-            height = region.UsesFullTextureHeight
-                ? textureHeight
-                : Mathf.RoundToInt(region.Height * scaleY);
-            x = Mathf.Clamp(x, 0, textureWidth - 1);
-            y = Mathf.Clamp(y, 0, textureHeight - 1);
-            width = Mathf.Clamp(width, 1, textureWidth - x);
-            height = Mathf.Clamp(height, 1, textureHeight - y);
-        }
-
-        private static void ApplyTiledRegion(RenderTexture atlas, TextureAsset sourceAsset, Texture sourceTexture,
-            RoadAtlasScaleMode scaleMode, float surfaceUvScale, int x, int topY, int width, int height, bool isSrgb)
-        {
-            RenderTexture target = null;
-            Texture texture = sourceTexture;
-            bool loaded = false;
-            bool ownsTexture = false;
-            TextureWrapMode oldWrapU = TextureWrapMode.Repeat;
-            TextureWrapMode oldWrapV = TextureWrapMode.Repeat;
-            try
-            {
-                if (texture == null && sourceAsset != null)
-                {
-                    texture = sourceAsset.Load<Texture2D>(0, TextureAsset.KeepOnCPU.Object);
-                    loaded = true;
-                    ownsTexture = true;
-                }
-                if (texture == null) throw new InvalidOperationException("Replacement surface returned no texture");
-                oldWrapU = texture.wrapModeU;
-                oldWrapV = texture.wrapModeV;
-                texture.wrapModeU = TextureWrapMode.Repeat;
-                texture.wrapModeV = TextureWrapMode.Repeat;
-                target = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32,
-                    isSrgb ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
-                Vector2 uvScale;
-                float verticalRepeats;
-                if (scaleMode == RoadAtlasScaleMode.FitRegionWidth)
-                {
-                    uvScale.x = 1f;
-                    verticalRepeats = (float)height / width * texture.width / texture.height;
-                }
-                else
-                {
-                    uvScale.x = (float)width / texture.width * surfaceUvScale;
-                    verticalRepeats = (float)height / texture.height * surfaceUvScale;
-                }
-                // Keep the texture seamless at the top and bottom edges by using a whole number of vertical tiles.
-                uvScale.y = Mathf.Max(1, Mathf.RoundToInt(verticalRepeats));
-                Graphics.Blit(texture, target, uvScale, Vector2.zero);
-                int destinationY = atlas.height - topY - height;
-                Graphics.CopyTexture(target, 0, 0, 0, 0, width, height, atlas, 0, 0, x, destinationY);
-            }
-            finally
-            {
-                if (texture != null)
-                {
-                    texture.wrapModeU = oldWrapU;
-                    texture.wrapModeV = oldWrapV;
-                }
-                if (target != null) RenderTexture.ReleaseTemporary(target);
-                if (loaded && ownsTexture) sourceAsset.Unload();
-            }
-        }
-
-        private RoadTexturePngOutput CaptureRoadTextureOutput(RenderTexture texture, RoadTexturePngOutput output,
-            RoadTextureGenerationState generation, bool isSrgb = false)
-        {
-            if (!SystemInfo.supportsAsyncGPUReadback)
-            {
-                output.Pixels = CaptureRenderTexturePixels(texture, isSrgb);
-                if (output.MapProperty == "_NormalMap") ApplyNormalHueShift(output.Pixels, output.Width,
-                    output.NormalHueRegions, output.NormalHueRotationDegrees);
-                return output;
-            }
-
-            lock (generation) generation.PendingReadbacks++;
-            try
-            {
-                AsyncGPUReadback.Request(texture, 0, TextureFormat.RGBA32, request =>
-                {
-                    try
-                    {
-                        if (request.hasError) throw new InvalidOperationException("AsyncGPUReadback failed for " + output.MapProperty);
-                        if (!generation.Token.IsCancellationRequested)
-                        {
-                            output.Pixels = request.GetData<Color32>().ToArray();
-                            if (output.MapProperty == "_NormalMap") ApplyNormalHueShift(output.Pixels, output.Width,
-                                output.NormalHueRegions, output.NormalHueRotationDegrees);
-                        }
-                    }
-                    catch (Exception exception)
-                    {
-                        lock (generation) if (generation.CaptureError == null) generation.CaptureError = exception;
-                    }
-                    finally
-                    {
-                        RenderTexture.ReleaseTemporary(texture);
-                        lock (generation) generation.PendingReadbacks--;
-                        CompleteRoadTexturePreparation(generation);
-                    }
-                });
-                return output;
-            }
-            catch (Exception exception)
-            {
-                lock (generation) generation.PendingReadbacks--;
-                if (generation.CaptureError == null) generation.CaptureError = exception;
-                throw;
-            }
-        }
-
-        private static void ApplyNormalHueShift(Color32[] pixels, int textureWidth, List<RectInt> regions, float degrees)
-        {
-            if (pixels == null || regions == null || Mathf.Abs(degrees) < 0.001f) return;
-            foreach (RectInt region in regions)
-            {
-                int minX = Mathf.Clamp(region.xMin, 0, textureWidth);
-                int maxX = Mathf.Clamp(region.xMax, 0, textureWidth);
-                for (int y = Mathf.Max(0, region.yMin); y < region.yMax; y++)
-                {
-                    int rowStart = y * textureWidth;
-                    if (rowStart >= pixels.Length) break;
-                    for (int x = minX; x < maxX; x++)
-                    {
-                        int index = rowStart + x;
-                        if (index >= 0 && index < pixels.Length)
-                            pixels[index] = RoadNormalHueTransform.ShiftHue(pixels[index], degrees);
-                    }
-                }
-            }
-        }
-
-        private static Color32[] CaptureRenderTexturePixels(RenderTexture source, bool isSrgb)
-        {
-            Texture2D readback = null;
-            RenderTexture previous = RenderTexture.active;
-            try
-            {
-                RenderTexture.active = source;
-                readback = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false, !isSrgb);
-                readback.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0, false);
-                readback.Apply(false, false);
-                return readback.GetPixels32();
-            }
-            finally
-            {
-                RenderTexture.active = previous;
-                if (readback != null) UnityEngine.Object.Destroy(readback);
-            }
-        }
-
-        private void WriteRoadTexturePngs(List<RoadTexturePngOutput> outputs, RoadTextureGenerationState generation)
-        {
-            CancellationToken cancellationToken = generation.Token;
-            foreach (RoadTexturePngOutput output in outputs)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                string temporaryPath = output.Path + "." + output.Generation + ".tmp";
-                try
-                {
-                    byte[] png = EncodePng(output.Pixels, output.Width, output.Height, cancellationToken);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    File.WriteAllBytes(temporaryPath, png);
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    lock (m_RoadTextureGenerationLock)
-                    {
-                        if (cancellationToken.IsCancellationRequested ||
-                            !m_RoadTextureGenerationStates.TryGetValue(output.RuleId, out RoadTextureGenerationState current) ||
-                            !ReferenceEquals(current, generation) || current.Generation != output.Generation)
-                            throw new OperationCanceledException(cancellationToken);
-
-                        if (File.Exists(output.Path)) File.Delete(output.Path);
-                        File.Move(temporaryPath, output.Path);
-                    }
-                }
-                finally
-                {
-                    if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
-                }
-            }
-        }
-
-        private static byte[] EncodePng(Color32[] pixels, int width, int height, CancellationToken cancellationToken)
-        {
-            int rowBytes = checked(width * 4 + 1);
-            byte[] scanlines = new byte[checked(rowBytes * height)];
-            for (int y = 0; y < height; y++)
-            {
-                if ((y & 63) == 0) cancellationToken.ThrowIfCancellationRequested();
-                int sourceRow = height - 1 - y;
-                int sourceIndex = sourceRow * width;
-                int destinationIndex = y * rowBytes;
-                scanlines[destinationIndex++] = 0;
-                for (int x = 0; x < width; x++)
-                {
-                    Color32 pixel = pixels[sourceIndex + x];
-                    scanlines[destinationIndex++] = pixel.r;
-                    scanlines[destinationIndex++] = pixel.g;
-                    scanlines[destinationIndex++] = pixel.b;
-                    scanlines[destinationIndex++] = pixel.a;
-                }
-            }
-
-            byte[] deflateBytes;
-            using (var compressed = new MemoryStream())
-            {
-                using (var deflate = new DeflateStream(compressed, System.IO.Compression.CompressionLevel.Optimal, true))
-                {
-                    for (int offset = 0; offset < scanlines.Length; offset += 65536)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        int count = Math.Min(65536, scanlines.Length - offset);
-                        deflate.Write(scanlines, offset, count);
-                    }
-                }
-                deflateBytes = compressed.ToArray();
-            }
-
-            var zlib = new byte[2 + deflateBytes.Length + 4];
-            zlib[0] = 0x78;
-            zlib[1] = 0x9C;
-            Buffer.BlockCopy(deflateBytes, 0, zlib, 2, deflateBytes.Length);
-            WriteUInt32BigEndian(zlib, zlib.Length - 4, ComputeAdler32(scanlines));
-
-            using (var png = new MemoryStream())
-            {
-                png.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, 0, 8);
-                var header = new byte[13];
-                WriteUInt32BigEndian(header, 0, (uint)width);
-                WriteUInt32BigEndian(header, 4, (uint)height);
-                header[8] = 8;
-                header[9] = 6;
-                WritePngChunk(png, "IHDR", header);
-                WritePngChunk(png, "IDAT", zlib);
-                WritePngChunk(png, "IEND", Array.Empty<byte>());
-                return png.ToArray();
-            }
-        }
-
-        private static void WritePngChunk(Stream stream, string type, byte[] data)
-        {
-            byte[] typeBytes = System.Text.Encoding.ASCII.GetBytes(type);
-            WriteUInt32BigEndian(stream, (uint)data.Length);
-            stream.Write(typeBytes, 0, typeBytes.Length);
-            stream.Write(data, 0, data.Length);
-            uint crc = 0xFFFFFFFF;
-            foreach (byte value in typeBytes) crc = UpdateCrc32(crc, value);
-            foreach (byte value in data) crc = UpdateCrc32(crc, value);
-            WriteUInt32BigEndian(stream, crc ^ 0xFFFFFFFF);
-        }
-
-        private static uint UpdateCrc32(uint crc, byte value)
-        {
-            return (crc >> 8) ^ s_PngCrcTable[(int)((crc ^ value) & 0xFF)];
-        }
-
-        private static uint[] BuildPngCrcTable()
-        {
-            var table = new uint[256];
-            for (int i = 0; i < table.Length; i++)
-            {
-                uint value = (uint)i;
-                for (int bit = 0; bit < 8; bit++)
-                    value = (value & 1) != 0 ? (value >> 1) ^ 0xEDB88320u : value >> 1;
-                table[i] = value;
-            }
-            return table;
-        }
-
-        private static uint ComputeAdler32(byte[] data)
-        {
-            const uint modulus = 65521;
-            uint a = 1;
-            uint b = 0;
-            int offset = 0;
-            while (offset < data.Length)
-            {
-                int end = Math.Min(offset + 5552, data.Length);
-                for (; offset < end; offset++)
-                {
-                    a += data[offset];
-                    b += a;
-                }
-                a %= modulus;
-                b %= modulus;
-            }
-            return (b << 16) | a;
-        }
-
-        private static void WriteUInt32BigEndian(Stream stream, uint value)
-        {
-            stream.WriteByte((byte)(value >> 24));
-            stream.WriteByte((byte)(value >> 16));
-            stream.WriteByte((byte)(value >> 8));
-            stream.WriteByte((byte)value);
-        }
-
-        private static void WriteUInt32BigEndian(byte[] buffer, int offset, uint value)
-        {
-            buffer[offset] = (byte)(value >> 24);
-            buffer[offset + 1] = (byte)(value >> 16);
-            buffer[offset + 2] = (byte)(value >> 8);
-            buffer[offset + 3] = (byte)value;
-        }
-
         private static void DeleteGeneratedRoadTextures(int ruleId)
         {
             string directory = Path.Combine(GetModsDataRoot(), "Replacement Solutions", "textures");
@@ -847,16 +345,6 @@ namespace AutomaticTextureReplacer
             }
         }
 
-        private static void DeleteObsoleteStandaloneRegionTextures(string directory)
-        {
-            string[] mapNames = { "BaseColorMap", "NormalMap", "MaskMap" };
-            foreach (RoadAtlasRegion region in RoadAtlasRegions.RoadEu)
-                foreach (string mapName in mapNames)
-                    foreach (string file in Directory.GetFiles(directory, "RoadEU_" + region.Id + "_" + mapName + "_*.png", SearchOption.TopDirectoryOnly))
-                    {
-                        try { File.Delete(file); }
-                        catch (Exception exception) { Mod.Log.Warn(exception, "Could not remove an obsolete standalone road region texture: " + file); }
-                    }
-        }
+
     }
 }
